@@ -2480,6 +2480,243 @@ def setup_glow():
 setup_glow()
 
 
+
+# ============================================================
+# V14 — REAL PHOTOREALISM / PHYSICAL MATERIALS / CAMERA / LIGHT
+# Objetivo: que la escena parezca una fotografía de un laboratorio
+# real y no una escena 3D limpia.
+# ============================================================
+
+# ---- 1) Microdetalle PBR: variación de roughness + micro-normal ----
+def _v14_microfinish(mat_obj, scale=420.0, strength=0.035, rough_var=0.055):
+    if not mat_obj or not getattr(mat_obj, "use_nodes", False):
+        return
+    nt = mat_obj.node_tree
+    bs = nt.nodes.get("Principled BSDF")
+    tc = nt.nodes.get("Texture Coordinate")
+    if not bs:
+        return
+    # Evitar duplicar el acabado si el script se ejecuta dos veces.
+    if nt.nodes.get("V14_MICRO_FINISH"):
+        return
+    tex = nt.nodes.new("ShaderNodeTexNoise")
+    tex.name = "V14_MICRO_FINISH"
+    tex.label = "V14 micro surface"
+    tex.inputs["Scale"].default_value = scale
+    tex.inputs["Detail"].default_value = 3.0
+    tex.inputs["Roughness"].default_value = 0.62
+    if tc:
+        nt.links.new(tc.outputs["Object"], tex.inputs["Vector"])
+    else:
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        nt.links.new(tc.outputs["Object"], tex.inputs["Vector"])
+
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = strength
+    bump.inputs["Distance"].default_value = 0.006
+    nt.links.new(tex.outputs["Fac"], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], bs.inputs["Normal"])
+
+    # Roughness ligeramente irregular, nunca perfectamente uniforme.
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.name = "V14_ROUGHNESS_VARIATION"
+    ramp.color_ramp.elements[0].position = 0.32
+    ramp.color_ramp.elements[0].color = (max(0.02, rough_var * -0.25 + 0.42),)*3+(1.0,)
+    ramp.color_ramp.elements[1].position = 0.68
+    ramp.color_ramp.elements[1].color = (min(1.0, 0.42 + rough_var),)*3+(1.0,)
+    nt.links.new(tex.outputs["Fac"], ramp.inputs["Fac"])
+    try:
+        nt.links.new(ramp.outputs["Color"], bs.inputs["Roughness"])
+    except Exception:
+        pass
+
+# Acabado conservador: no destruir el carácter de pantallas/neones.
+_v14_skip = {"Screen","Screen Big","Screen HUD","LCD","LED Cyan","LED Blue","LED Green",
+             "LED Red","LED Amber","LED Violet","Label White"}
+for _m in list(bpy.data.materials):
+    if _m.name in _v14_skip:
+        continue
+    if _m.use_nodes and _m.node_tree.nodes.get("Principled BSDF"):
+        _base = _m.node_tree.nodes.get("Principled BSDF").inputs.get("Metallic")
+        _metal = float(_base.default_value) if _base else 0.0
+        _v14_microfinish(_m, 650 if _metal > 0.5 else 520,
+                         0.022 if _metal > 0.5 else 0.032,
+                         0.075 if _metal > 0.5 else 0.055)
+
+# ---- 2) Bevel físico: ningún gabinete importante tiene aristas matemáticas ----
+def _v14_bevel(o):
+    if o.type != "MESH" or o.name.startswith("V14_"):
+        return
+    if o.get("V14_BEVEL"):
+        return
+    try:
+        dims = [abs(float(x)) for x in o.dimensions]
+        mn = min(dims)
+        mx = max(dims)
+        if mn <= 0.0005 or mx > 25.0:
+            return
+        # No deformar detalles microscópicos ni superficies gigantes.
+        if mn < 0.003:
+            return
+        width = min(max(mn * 0.045, 0.0008), 0.028)
+        if mx > 8.0:
+            width = min(width, 0.035)
+        mod = o.modifiers.new("V14_REAL_EDGE_BEVEL", "BEVEL")
+        mod.width = width
+        mod.segments = 3
+        mod.limit_method = "ANGLE"
+        mod.angle_limit = math.radians(20.0)
+        try:
+            mod.harden_normals = True
+        except Exception:
+            pass
+        o["V14_BEVEL"] = True
+    except Exception:
+        pass
+
+for _o in list(scene.objects):
+    _v14_bevel(_o)
+
+# ---- 3) Contacto y escala física de la escena ----
+# Sombras de contacto: reforzar solo luces que soportan el efecto.
+for _o in scene.objects:
+    if _o.type == "LIGHT":
+        try:
+            _o.data.use_shadow = True
+        except Exception:
+            pass
+
+# ---- 4) Iluminación fotográfica: neutralizar el exceso de cian ----
+# Los acentos siguen existiendo, pero la luz principal pasa a ser blanca/neutra.
+_v14_lights = {
+    "KEY_LIGHT": (1350.0, (0.93,0.96,1.0)),
+    "FILL_LIGHT": (500.0, (0.72,0.82,1.0)),
+    "HERO_KEY": (1750.0, (0.98,0.99,1.0)),
+    "HERO_TOP": (1050.0, (1.0,0.98,0.94)),
+    "HERO_RIM": (650.0, (0.34,0.55,1.0)),
+    "ACCENT_AMBER": (280.0, (1.0,0.62,0.30)),
+    "ACCENT_VIOLET": (180.0, (0.72,0.45,1.0)),
+    "ACCENT_TEAL": (220.0, (0.30,0.85,0.85)),
+}
+for _name, (_energy, _color) in _v14_lights.items():
+    _lo = bpy.data.objects.get(_name)
+    if _lo and _lo.type == "LIGHT":
+        _lo.data.energy = _energy * LIGHT_SCALE
+        _lo.data.color = _color
+
+# Softbox adicional: gran fuente = sombras fotográficas suaves.
+try:
+    area_light("V14_SOFTBOX", (-3.5,-6.5,7.8), 900*LIGHT_SCALE, 5.5,
+               (1.0,0.98,0.95), L(-0.5,0,1.0))
+    area_light("V14_RIM_SOFT", (5.5,3.5,6.5), 600*LIGHT_SCALE, 4.0,
+               (0.55,0.72,1.0), L(-0.2,0.2,1.2))
+except Exception as e:
+    print("V14 softboxes:", e)
+
+# ---- 5) Realismo de vidrio: menos plástico, más transmisión/reflexión ----
+for _name in ("Glass", "Screen", "Screen Big", "Screen HUD"):
+    _m = bpy.data.materials.get(_name)
+    if not _m or not _m.use_nodes:
+        continue
+    _bs = _m.node_tree.nodes.get("Principled BSDF")
+    if not _bs:
+        continue
+    try:
+        if _name == "Glass":
+            _bs.inputs["Roughness"].default_value = 0.025
+            if "IOR" in _bs.inputs: _bs.inputs["IOR"].default_value = 1.45
+            if "Coat Weight" in _bs.inputs: _bs.inputs["Coat Weight"].default_value = 0.25
+            if "Coat Roughness" in _bs.inputs: _bs.inputs["Coat Roughness"].default_value = 0.05
+    except Exception:
+        pass
+
+# ---- 6) Cámara fotográfica real ----
+def _v14_camera(name, lens, fstop, focus_name):
+    cam = bpy.data.objects.get(name)
+    if not cam or cam.type != "CAMERA":
+        return
+    cam.data.lens = lens
+    cam.data.sensor_width = 36.0
+    cam.data.dof.use_dof = True
+    cam.data.dof.aperture_fstop = fstop
+    focus = bpy.data.objects.get(focus_name)
+    if focus:
+        cam.data.dof.focus_object = focus
+
+_v14_camera("CAMERA_MASTER", 32.0, 10.0, "HP_PC_FLOOR")
+_v14_camera("CAMERA_HERO_PC", 52.0, 5.6, "HP_MOTHERBOARD")
+_v14_camera("CAMERA_WIDE", 28.0, 11.0, "HP_PC_FLOOR")
+
+# ---- 7) Color science: contraste cinematográfico sin quemar neones ----
+try:
+    scene.view_settings.view_transform = "AgX"
+except Exception:
+    pass
+try:
+    for _look in ("AgX - Medium High Contrast", "Medium High Contrast", "AgX - Punchy", "Punchy"):
+        try:
+            scene.view_settings.look = _look
+            break
+        except Exception:
+            continue
+except Exception:
+    pass
+try:
+    scene.view_settings.exposure = -0.35
+    scene.view_settings.gamma = 1.0
+except Exception:
+    pass
+
+# ---- 8) Render final REAL: Cycles + RTX/OptiX ----
+try:
+    cprefs = bpy.context.preferences.addons["cycles"].preferences
+    cprefs.compute_device_type = "OPTIX"
+    for _dev in cprefs.devices:
+        _dev.use = True
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "GPU"
+    scene.cycles.samples = 768
+    scene.cycles.use_denoising = True
+    scene.cycles.max_bounces = 12
+    scene.cycles.diffuse_bounces = 5
+    scene.cycles.glossy_bounces = 7
+    scene.cycles.transmission_bounces = 8
+    scene.cycles.transparent_max_bounces = 8
+    try:
+        scene.cycles.use_adaptive_sampling = True
+    except Exception:
+        pass
+except Exception as e:
+    print("V14: OptiX no disponible; se mantiene el motor compatible:", e)
+
+# 4K real, sin compresión JPEG.
+scene.render.resolution_x = 3840
+scene.render.resolution_y = 2160
+scene.render.resolution_percentage = 100
+scene.render.image_settings.file_format = "PNG"
+
+# ---- 9) Evitar que el compositor convierta el realismo en "glow de videojuego" ----
+try:
+    if scene.node_tree:
+        for _n in scene.node_tree.nodes:
+            if _n.bl_idname == "CompositorNodeGlare":
+                try:
+                    _n.threshold = 2.5
+                except Exception:
+                    pass
+                try:
+                    _n.mix = -0.92
+                except Exception:
+                    pass
+except Exception:
+    pass
+
+bpy.context.view_layer.update()
+
+# ============================================================
+# FIN V14
+# ============================================================
+
 # ============================================================
 # 13. ESCENA ESTATICA
 # ============================================================
