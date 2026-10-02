@@ -2717,6 +2717,284 @@ bpy.context.view_layer.update()
 # FIN V14
 # ============================================================
 
+
+# ============================================================
+# V15 — FULL LAB + HERO PC REALISM OVERHAUL
+# Arquitectura, servidores, cableado, props, PC, macro detalles
+# y cámaras cinematográficas. Todo estático: sin keyframes.
+# ============================================================
+
+def _v15_mat(name, base, metallic=0.0, rough=0.45, bump=0.0):
+    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bs = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bs.inputs["Base Color"].default_value = (*base, 1)
+    bs.inputs["Metallic"].default_value = metallic
+    bs.inputs["Roughness"].default_value = rough
+    if "Coat Weight" in bs.inputs:
+        bs.inputs["Coat Weight"].default_value = 0.12 if metallic > 0.4 else 0.04
+    tex = nt.nodes.new("ShaderNodeTexNoise")
+    tex.inputs["Scale"].default_value = 420.0 if bump else 35.0
+    tex.inputs["Detail"].default_value = 3.0
+    tex.inputs["Roughness"].default_value = 0.62
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].color = (*tuple(min(c*0.72,1) for c in base),1)
+    ramp.color_ramp.elements[1].color = (*tuple(min(c*1.22+0.01,1) for c in base),1)
+    nt.links.new(tex.outputs["Fac"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], bs.inputs["Base Color"])
+    if bump:
+        b = nt.nodes.new("ShaderNodeBump")
+        b.inputs["Strength"].default_value = bump
+        b.inputs["Distance"].default_value = 0.004
+        nt.links.new(tex.outputs["Fac"], b.inputs["Height"])
+        nt.links.new(b.outputs["Normal"], bs.inputs["Normal"])
+    nt.links.new(bs.outputs["BSDF"], out.inputs["Surface"])
+    return m
+
+V15_METAL_DARK = _v15_mat("V15 Painted Steel", (0.025,0.032,0.040), 0.72, 0.31, 0.045)
+V15_METAL_BRUSH = _v15_mat("V15 Brushed Aluminum", (0.24,0.27,0.29), 0.88, 0.22, 0.025)
+V15_RUBBER = _v15_mat("V15 EPDM Rubber", (0.008,0.009,0.010), 0.02, 0.72, 0.07)
+V15_COPPER = _v15_mat("V15 Bare Copper", (0.55,0.09,0.025), 0.96, 0.20, 0.02)
+V15_GOLD = _v15_mat("V15 ENIG Gold", (0.72,0.43,0.065), 0.98, 0.13, 0.012)
+V15_SILVER = _v15_mat("V15 Solder Tin", (0.46,0.49,0.51), 0.93, 0.19, 0.018)
+V15_PLASTIC = _v15_mat("V15 ABS Black", (0.012,0.014,0.017), 0.03, 0.34, 0.045)
+V15_ESD = _v15_mat("V15 ESD Mat", (0.018,0.028,0.030), 0.0, 0.63, 0.06)
+
+def _v15_delete():
+    for o in list(scene.objects):
+        if o.name.startswith("V15_"):
+            bpy.data.objects.remove(o, do_unlink=True)
+
+_v15_delete()
+
+# ---- A) LABORATORIO: construcción modular visible ----
+# Juntas de panel y fijaciones hacen que las paredes dejen de parecer planos.
+for wall_x, ys, side in [(-14.57, range(-8,9,2), "L"), (14.57, range(-8,9,2), "R")]:
+    for yy in ys:
+        box("V15_PANEL_JOINT", (wall_x, yy, 4.2), (0.012, 0.018, 3.65),
+            V15_METAL_DARK, COL_ARCH, 0.0)
+        for zz in (0.75, 7.55):
+            cyl("V15_PANEL_RIVET", (wall_x - 0.015 if side=="L" else wall_x + 0.015, yy, zz),
+                0.022, 0.012, V15_SILVER, COL_ARCH, seg=10)
+for xx in range(-12,13,2):
+    box("V15_BACK_JOINT", (xx, 10.57, 4.2), (0.018,0.012,3.65),
+        V15_METAL_DARK, COL_ARCH, 0.0)
+    for zz in (0.72, 7.55):
+        cyl("V15_BACK_RIVET", (xx, 10.54, zz), 0.022, 0.012, V15_SILVER, COL_ARCH, seg=10)
+
+# Juntas del piso y pequeñas placas de acceso.
+for xx in range(-12,13,3):
+    for yy in (-9, -6, -3, 0, 3, 6, 9):
+        box("V15_FLOOR_JOINT", (xx, yy, 0.058), (0.012,1.36,0.006), V15_METAL_DARK, COL_ARCH, 0)
+for xx, yy in [(-11,-6), (11,6), (-8,6), (8,-6)]:
+    box("V15_FLOOR_SERVICE_PANEL", (xx,yy,0.078), (0.48,0.34,0.018), V15_METAL_DARK, COL_ARCH, 0.018)
+    for sx in (-0.34,0.34):
+        for sy in (-0.20,0.20):
+            cyl("V15_SERVICE_BOLT",(xx+sx,yy+sy,0.105),0.018,0.012,V15_GOLD,COL_ARCH,seg=10)
+
+# Paneles eléctricos / red de servicio.
+for x, y, z in [(-13.9,-4.0,2.2),(-13.9,4.0,2.2),(13.9,4.0,2.2)]:
+    box("V15_UTILITY_PANEL",(x,y,z),(0.08,0.75,1.05),V15_METAL_DARK,COL_ARCH,0.035)
+    for k in range(8):
+        box("V15_UTILITY_SLOT",(x + (-0.09 if x<0 else 0.09), y-0.50+k*0.14,z),
+            (0.025,0.045,0.025), MAT_CYAN if k%3==0 else V15_SILVER,COL_ARCH,0.005)
+    text("V15_PANEL_LABEL","SERVICE / I-O",(x + (-0.11 if x<0 else 0.11),y,z+0.72),
+         0.11,MAT_WHITE,COL_ARCH,rot=(R90,0,R90 if x<0 else -R90))
+
+# Real HVAC service details.
+for sx in (-1,1):
+    for yy in (-6,0,6):
+        cyl("V15_HVAC_CLAMP",(sx*12.9,yy,7.35),0.44,0.05,V15_METAL_DARK,COL_ARCH,
+            rot=(R90,0,0),seg=32)
+        for zz in (7.08,7.62):
+            box("V15_HVAC_BRACKET",(sx*12.9,yy,zz),(0.08,0.20,0.035),V15_METAL_DARK,COL_ARCH,0.01)
+
+# ---- B) ESTACIÓN ESD / MANTENIMIENTO ----
+box("V15_ESD_BENCH",(10.0,-6.6,1.12),(2.7,0.72,0.07),V15_METAL_DARK,COL_PROPS,0.035)
+box("V15_ESD_MAT",(10.0,-6.6,1.205),(2.35,0.58,0.018),V15_ESD,COL_PROPS,0.025)
+for lx in (7.7,12.3):
+    box("V15_BENCH_LEG",(lx,-6.6,0.56),(0.09,0.09,0.50),V15_METAL_DARK,COL_PROPS,0.018)
+for px in (8.2,8.65):
+    cyl("V15_SCREWDRIVER",(px,-6.58,1.39),0.035,0.72,V15_METAL_DARK,COL_PROPS,rot=(0,R90,0),seg=12)
+    cyl("V15_DRIVER_GRIP",(px+0.30,-6.58,1.39),0.065,0.28,MAT_PL_BLUE,COL_PROPS,rot=(0,R90,0),seg=16)
+# Multimeter
+box("V15_MULTIMETER",(11.3,-6.55,1.38),(0.32,0.16,0.055),V15_PLASTIC,COL_PROPS,0.035)
+box("V15_METER_SCREEN",(11.3,-6.71,1.43),(0.20,0.012,0.026),MAT_LCD,COL_PROPS,0.005)
+for xx in (11.12,11.48):
+    cable("V15_METER_LEAD",[(xx,-6.70,1.32),(xx+0.1,-6.0,1.15),(xx+0.25,-5.5,1.0)],
+          0.018,MAT_RED if xx<11.3 else MAT_BLACK,COL_PROPS)
+
+# ---- C) SERVIDORES: más profundidad y hardware visible ----
+for rack_i, rx in enumerate((-10.8,-3.6,3.6,10.8),1):
+    # tornillería y módulos de ventilación
+    for rz in (0.8, 2.8, 4.8, 6.7):
+        for yy in (-0.04,0.04):
+            cyl("V15_RACK_BOLT",(rx+(-1.65 if yy<0 else 1.65),7.35,rz),
+                0.022,0.018,V15_SILVER,COL_SERVER,seg=10)
+    for unit in range(12):
+        z = 0.72 + unit*0.45
+        box("V15_SERVER_BEZEL",(rx,7.31,z),(1.50,0.055,0.18),V15_PLASTIC,COL_SERVER,0.025)
+        for px in (-1.15,-0.92,-0.69,-0.46):
+            box("V15_VENT_SLOT",(rx+px,7.245,z),(0.035,0.012,0.11),V15_METAL_DARK,COL_SERVER,0.004)
+        for px, matx in [(-1.22,MAT_GREEN),(-1.12,MAT_BLUE),(-1.02,MAT_AMBER)]:
+            sphere("V15_SERVER_LED",(rx+px,7.235,z+0.105),0.018,matx,COL_SERVER)
+        # handles reales
+        box("V15_SERVER_HANDLE",(rx+1.20,7.235,z),(0.06,0.025,0.10),V15_SILVER,COL_SERVER,0.012)
+    # Patch panel superior
+    box("V15_PATCH",(rx,7.24,6.55),(1.35,0.08,0.20),V15_PLASTIC,COL_SERVER,0.025)
+    for p in range(12):
+        xx = rx-1.05+p*0.19
+        cyl("V15_PATCH_PORT",(xx,7.13,6.55),0.045,0.045,V15_GOLD,COL_SERVER,rot=(R90,0,0),seg=12)
+
+# Realistic cable bundles between racks.
+for y0 in (7.05,7.48):
+    for i in range(8):
+        x0 = -12.0 + i*3.35
+        cable("V15_RACK_CABLE",
+              [(x0,y0,5.8),(x0+0.25,y0-0.25,5.45),(x0+0.55,y0-0.15,4.9),
+               (x0+0.75,y0-0.10,4.25)],
+              0.025,[MAT_CYAN,MAT_BLUE,MAT_GREEN,MAT_AMBER][i%4],COL_SERVER)
+# Velcro / cable ties.
+for x0 in (-9.0,-4.5,0,4.5,9.0):
+    box("V15_CABLE_TIE",(x0,7.15,4.9),(0.08,0.06,0.16),MAT_PL_BLACK,COL_SERVER,0.018)
+
+# ---- D) PC HERO: detalles de fabricación alrededor de las piezas reales ----
+_mb = bpy.data.objects.get("HP_MOTHERBOARD")
+if _mb:
+    _mx = _mb.location.x
+    _my = _mb.location.y
+    _mz = _mb.location.z
+    # Mounting holes / rings, aligned to the existing board.
+    for hx,hy in [(-2.12,-1.72),(0.17,-1.72),(-2.12,1.80),(0.17,1.80)]:
+        cyl("V15_MB_MOUNT",(hx,hy,_mz+0.035),0.095,0.018,V15_GOLD,COL_PC,seg=24)
+        cyl("V15_MB_MOUNT_HOLE",(hx,hy,_mz+0.055),0.045,0.020,V15_RUBBER,COL_PC,seg=20)
+    # Fine copper buses only in open zones, avoiding the main components.
+    for row in range(12):
+        yy = -1.42 + row*0.24
+        for col in range(7):
+            xx = -1.90 + col*0.34
+            cable("V15_MB_TRACE",[(xx,yy,_mz+0.028),(xx+0.18,yy+0.035,_mz+0.028)],
+                  0.006,V15_COPPER,COL_PC)
+    # tiny test points around open PCB areas
+    for row in range(5):
+        for col in range(6):
+            xx=-1.65+col*0.42
+            yy=1.05+row*0.16
+            cyl("V15_MB_TESTPAD",(xx,yy,_mz+0.040),0.026,0.008,V15_GOLD,COL_PC,seg=16)
+    # Board-edge silk markings.
+    for xx in (-2.0,-1.6,-1.2,-0.8,-0.4,0.0):
+        box("V15_MB_EDGE_SILK",(xx,-1.86,_mz+0.052),(0.11,0.008,0.002),MAT_WHITE,COL_PC,0)
+    # Solder fillets on selected visible components.
+    for target_name in ("HP_CPU","HP_CHIPSET","HP_BIOS"):
+        t = bpy.data.objects.get(target_name)
+        if t:
+            tx,ty,tz=t.location
+            for dx in (-0.07,0.07):
+                for dy in (-0.05,0.05):
+                    sphere("V15_SOLDER_FILLET",(tx+dx,ty+dy,tz+0.02),0.018,V15_SILVER,COL_PC)
+
+# CPU IHS micro-details and cooler fasteners.
+_cpu = bpy.data.objects.get("HP_CPU")
+if _cpu:
+    cx,cy,cz=_cpu.location
+    for dx in (-0.18,0.18):
+        for dy in (-0.14,0.14):
+            cyl("V15_CPU_CONTACT",(cx+dx,cy+dy,cz-0.035),0.012,0.018,V15_GOLD,COL_PC,seg=10)
+    box("V15_CPU_ETCH",(cx,cy,cz+0.022),(0.20,0.07,0.002),V15_SILVER,COL_PC,0.001)
+
+# Cooler screw springs and fan cable.
+cool = bpy.data.objects.get("HP_COOLER_PLATE")
+if cool:
+    qx,qy,qz=cool.location
+    for dx,dy in [(-0.36,-0.28),(0.36,-0.28),(-0.36,0.28),(0.36,0.28)]:
+        cyl("V15_COOLER_SCREW",(qx+dx,qy+dy,qz+0.08),0.028,0.08,V15_SILVER,COL_PC,seg=12)
+        torus("V15_COOLER_SPRING",(qx+dx,qy+dy,qz+0.13),0.045,0.009,V15_SILVER,COL_PC,rot=(0,0,0))
+
+fan = bpy.data.objects.get("HP_FAN_ROTOR")
+if fan:
+    fx,fy,fz=fan.location
+    cable("V15_FAN_CABLE",[(fx,fy,fz),(fx+0.18,fy-0.08,fz-0.03),(fx+0.28,fy-0.20,fz-0.02)],
+          0.014,MAT_BLACK,COL_PC)
+
+# SATA/power cable strain-relief and connectors, based on existing named objects.
+for nm in ("HP_SATA_CABLE","HP_POWER_CABLE","HP_ODD_CABLE"):
+    ob=bpy.data.objects.get(nm)
+    if ob:
+        ob.data.materials.clear()
+        ob.data.materials.append(V15_RUBBER)
+
+# ---- E) HERRAMIENTAS / REPUESTOS / REALISMO DE USO ----
+box("V15_PARTS_TRAY",(6.5,-6.5,1.26),(0.72,0.42,0.06),V15_METAL_DARK,COL_PROPS,0.03)
+for i in range(10):
+    xx=6.05+(i%5)*0.22
+    yy=-6.72+(i//5)*0.30
+    cyl("V15_SPARE_COMPONENT",(xx,yy,1.36),0.055,0.035,V15_SILVER,COL_PROPS,seg=12)
+for x0 in (5.2,5.55):
+    box("V15_TOOL",(x0,-5.9,1.30),(0.08,0.42,0.035),V15_METAL_DARK,COL_PROPS,0.025)
+    cyl("V15_TOOL_HANDLE",(x0,-5.45,1.30),0.07,0.22,MAT_PL_BLUE,COL_PROPS,rot=(R90,0,0),seg=16)
+
+# ---- F) CÁMARAS FOTOGRÁFICAS ADICIONALES ----
+def _v15_make_camera(name, loc, target, lens, fstop):
+    camd=bpy.data.cameras.new(name)
+    cam=bpy.data.objects.new(name,camd)
+    COL_CAMERA.objects.link(cam)
+    cam.location=loc
+    point_at(cam,target)
+    camd.lens=lens
+    camd.sensor_width=36.0
+    camd.dof.use_dof=True
+    camd.data.dof.aperture_fstop=fstop
+    return cam
+
+_cam = _v15_make_camera("V15_CAMERA_MACRO_PC",(1.15,-1.15,2.15),(-0.95,0.15,0.48),85.0,2.8)
+_cam.data.dof.focus_object = _mb if _mb else None
+_cam = _v15_make_camera("V15_CAMERA_LAB",(8.8,-10.2,5.6),(0,1.5,2.6),30.0,8.0)
+_cam = _v15_make_camera("V15_CAMERA_SERVER",(-8.8,-9.4,4.0),(-8.5,7.0,3.0),50.0,5.6)
+
+# ---- G) MASTER: mejorar resolución y sombras sin look plástico ----
+try:
+    scene.render.engine="CYCLES"
+    scene.cycles.samples=1024
+    scene.cycles.use_denoising=True
+    scene.cycles.max_bounces=12
+    scene.cycles.diffuse_bounces=5
+    scene.cycles.glossy_bounces=7
+    scene.cycles.transmission_bounces=8
+    scene.cycles.transparent_max_bounces=8
+    scene.cycles.use_adaptive_sampling=True
+    cp=bpy.context.preferences.addons["cycles"].preferences
+    cp.compute_device_type="OPTIX"
+    for dev in cp.devices:
+        dev.use=True
+    scene.cycles.device="GPU"
+except Exception as e:
+    print("V15 Cycles/OptiX:",e)
+
+scene.render.resolution_x=3840
+scene.render.resolution_y=2160
+scene.render.resolution_percentage=100
+scene.render.image_settings.file_format="PNG"
+try:
+    scene.render.image_settings.color_mode="RGBA"
+except Exception:
+    pass
+
+# Mantener el futurismo, pero con una exposición fotográfica más natural.
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.exposure=-0.25
+except Exception:
+    pass
+
+bpy.context.view_layer.update()
+
+# ============================================================
+# FIN V15
+# ============================================================
+
 # ============================================================
 # 13. ESCENA ESTATICA
 # ============================================================
