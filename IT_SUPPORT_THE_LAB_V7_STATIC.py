@@ -17,9 +17,9 @@ from mathutils import Vector
 # AJUSTES RAPIDOS  (si algo te queda muy claro u oscuro, toca SOLO esto)
 # ------------------------------------------------------------
 QUALITY = "PREVIEW"      # "PREVIEW" (rapido) o "FINAL" (calidad maxima)
-EXPOSURE = -0.5          # mas negativo = mas oscuro
-LIGHT_SCALE = 0.35       # multiplica la potencia de TODAS las luces
-EMIS = 0.40              # multiplica el brillo de neones / LEDs / pantallas
+EXPOSURE = -0.15          # mas negativo = mas oscuro
+LIGHT_SCALE = 0.75       # multiplica la potencia de TODAS las luces
+EMIS = 0.65              # multiplica el brillo de neones / LEDs / pantallas
 VIEW_TRANSFORM = "AgX"   # "AgX" o "Standard" (Standard conserva mas los colores)
 
 R90 = math.radians(90)
@@ -1263,12 +1263,12 @@ for y in (-5.8, -1.8, 2.2, 6.2):
 
 # --- cuatro posiciones reales de presentacion ---
 for i, (x, y) in enumerate(((-2.4, -1.4), (2.4, -1.4), (-2.4, 1.7), (2.4, 1.7)), 1):
-    torus("V7_PRESENTER_RING", (x, y, 0.10), 0.46, 0.018, MAT_CYAN, COL_STAGE, seg=32, ring=8)
+    torus("V7_PRESENTER_RING", (x, y, 0.10), 0.46, 0.018, MAT_CYAN, COL_STAGE, seg=32)
     cyl("V7_PRESENTER_CENTER", (x, y, 0.11), 0.10, 0.018, MAT_BLACK, COL_STAGE, seg=24)
     text("V7_PRESENTER_ID", "P%d" % i, (x, y - 0.50, 0.11), 0.12, MAT_WHITE, COL_STAGE)
 
 # --- borde tecnico del escenario, sin bloquear a los presentadores ---
-torus("V7_STAGE_TECH_RING", (0, -0.8, 0.16), 5.05, 0.025, MAT_STEEL, COL_STAGE, seg=64, ring=10)
+torus("V7_STAGE_TECH_RING", (0, -0.8, 0.16), 5.05, 0.025, MAT_STEEL, COL_STAGE, seg=64)
 for a in (0, math.pi / 2, math.pi, 3 * math.pi / 2):
     x, y = 5.05 * math.cos(a), -0.8 + 5.05 * math.sin(a)
     box("V7_STAGE_MARKER", (x, y, 0.18), (0.10, 0.10, 0.025), MAT_AMBER, COL_STAGE, 0.01)
@@ -1504,4 +1504,4 @@ try:
 except Exception as e:
     print("No se pudo guardar copia:", e)
 
-print("LISTO. Cambia el viewport a 'Rendered' o mira por CAMERA_INTRO. Espacio = animar.")
+print("LISTO. V7 STATIC: cambia el viewport a Rendered y usa CAMERA_MASTER / CAMERA_WIDE.")
