@@ -4412,3 +4412,209 @@ text("V17_SERVICE_TEXT","HP / USDT",(1.55,9.08,1.32),0.075,V17_BLACK,COL_PC)
 # Final PC collection only; no changes to cameras/lights/lab collections.
 bpy.context.view_layer.update()
 print("V17 HP COMPAQ 8200 USDT REBUILD COMPLETE — LAB UNCHANGED")
+
+
+# ============================================================
+# V18 — HP COMPAQ 8200 ELITE ULTRA-SLIM / USDT
+# TECHNICAL REBUILD — exterior + real USDT board architecture
+# Replaces ONLY V17 hero objects. Lab/cameras/lights untouched.
+# ============================================================
+
+# Remove every previous V17 hero object except the original pedestal.
+for o in list(COL_PC.objects):
+    if not o.name.startswith("PEDESTAL"):
+        bpy.data.objects.remove(o, do_unlink=True)
+
+V18_BLACK = bpy.data.materials.get("HP Black Plastic") or V17_BLACK
+V18_METAL = bpy.data.materials.get("Steel") or V17_SHEET
+V18_ALU = bpy.data.materials.get("Aluminum") or V17_ALU
+V18_PCB = bpy.data.materials.get("PCB") or V17_PCB
+V18_RUB = bpy.data.materials.get("Rubber") or V17_RUBBER
+V18_GOLD = bpy.data.materials.get("Gold") or V17_GOLD
+V18_WHITE = bpy.data.materials.get("Label White") or V17_WHITE
+
+# Real chassis ratio: 251 x 254 x 66 mm.
+# Use 1 Blender unit = 50 mm.
+V18_ORG=(0.0,7.20,1.42)
+V18_W=5.02
+V18_D=5.08
+V18_H=1.32
+V18_X=V18_W/2
+V18_Y=V18_D/2
+
+def V18P(x,y,z):
+    return (V18_ORG[0]+x,V18_ORG[1]+y,V18_ORG[2]+z)
+
+# ------------------------------------------------------------
+# REAL EXTERIOR: low, flat, stamped USDT chassis
+# ------------------------------------------------------------
+box("V18_BOTTOM",V18P(0,0,0.035),(V18_X-0.04,V18_Y-0.04,0.035),V18_METAL,COL_PC,0.025)
+box("V18_LEFT_SIDE",V18P(-V18_X+0.035,0,V18_H/2),(0.035,V18_Y-0.08,V18_H/2),V18_BLACK,COL_PC,0.025)
+box("V18_RIGHT_SIDE",V18P(V18_X-0.035,0,V18_H/2),(0.035,V18_Y-0.08,V18_H/2),V18_BLACK,COL_PC,0.025)
+box("V18_REAR_SHELL",V18P(0,V18_Y-0.035,V18_H/2),(V18_X-0.05,0.035,V18_H/2),V18_METAL,COL_PC,0.018)
+
+# Front bezel: broad black fascia with the optical opening and low I/O cluster.
+box("V18_FRONT_BEZEL",V18P(0,-V18_Y+0.045,V18_H/2),(V18_X-0.055,0.055,V18_H/2-0.035),V18_BLACK,COL_PC,0.065)
+
+# Optical drive opening at upper/right front.
+box("V18_ODD_FRAME",V18P(1.08,-V18_Y-0.018,0.88),(1.28,0.018,0.22),V18_BLACK,COL_PC,0.015)
+box("V18_ODD_TRAY",V18P(1.08,-V18_Y-0.044,0.88),(1.02,0.009,0.022),V18_METAL,COL_PC,0.004)
+box("V18_ODD_BUTTON",V18P(2.08,-V18_Y-0.052,0.69),(0.055,0.008,0.030),V18_ALU,COL_PC,0.005)
+
+# Front USB/audio/power cluster.
+for i,x in enumerate((-1.82,-1.40,-0.98,-0.56)):
+    box("V18_FRONT_USB",V18P(x,-V18_Y-0.050,0.30),(0.145,0.008,0.065),V18_RUB,COL_PC,0.008)
+for x in (-0.12,0.18):
+    cyl("V18_AUDIO",V18P(x,-V18_Y-0.058,0.30),0.050,0.018,V18_RUB,COL_PC,rot=(R90,0,0),seg=20)
+cyl("V18_POWER",V18P(-2.12,-V18_Y-0.055,0.83),0.115,0.030,V18_BLACK,COL_PC,rot=(R90,0,0),seg=32)
+torus("V18_POWER_RING",V18P(-2.12,-V18_Y-0.072,0.83),0.132,0.009,V18_ALU,COL_PC,rot=(R90,0,0),seg=32)
+text("V18_HP_LOGO","hp",V18P(-1.28,-V18_Y-0.070,0.82),0.43,V18_WHITE,COL_PC)
+
+# Side ventilation pattern — narrow horizontal stamped slots.
+for side in (-1,1):
+    for i in range(10):
+        y=-1.20+i*0.27
+        box("V18_SIDE_SLOT",V18P(side*(V18_X+0.006),y,0.54),(0.009,0.075,0.045),V18_METAL,COL_PC,0.002)
+
+# ------------------------------------------------------------
+# TOP ACCESS PANEL — real sliding/removable USDT panel
+# ------------------------------------------------------------
+box("V18_TOP_PANEL",V18P(0,0,1.315),(V18_X-0.055,V18_Y-0.055,0.035),V18_BLACK,COL_PC,0.025)
+# Recess/ribs are subtle stamped sheet-metal, not sci-fi decoration.
+for x in (-1.75,-1.10,-0.45,0.20,0.85,1.50):
+    box("V18_TOP_RIB",V18P(x,0,1.355),(0.025,V18_Y-0.42,0.018),V18_METAL,COL_PC,0.004)
+# Rear thumbscrew.
+cyl("V18_THUMBSCREW",V18P(0,V18_Y+0.01,1.36),0.055,0.028,V18_ALU,COL_PC,seg=20)
+
+# ------------------------------------------------------------
+# REAL USDT MOTHERBOARD — compact rectangular board and service layout
+# ------------------------------------------------------------
+box("V18_MOTHERBOARD",V18P(-0.25,0.12,0.145),(2.12,2.18,0.045),V18_PCB,COL_PC,0.018)
+
+# Board mounting screws.
+for x,y in ((-2.00,-1.72),(1.65,-1.72),(-2.00,1.78),(1.65,1.78)):
+    cyl("V18_MB_SCREW",V18P(x,y,0.205),0.043,0.020,V18_ALU,COL_PC,seg=12)
+
+# CPU socket and Sandy Bridge CPU, located centrally/forward.
+box("V18_CPU_SOCKET",V18P(-0.48,0.35,0.215),(0.57,0.57,0.035),V18_ALU,COL_PC,0.012)
+box("V18_CPU",V18P(-0.48,0.35,0.265),(0.37,0.37,0.035),V18_ALU,COL_PC,0.008)
+sphere("V18_PASTE",V18P(-0.48,0.35,0.305),0.105,V18_WHITE,COL_PC,scale=(1,1,0.20))
+
+# Two actual DDR3 SODIMM sockets, side-by-side as USDT memory.
+for x in (0.35,0.88):
+    box("V18_SODIMM_SLOT",V18P(x,-1.38,0.215),(0.16,0.82,0.030),V18_BLACK,COL_PC,0.006)
+    box("V18_SODIMM",V18P(x,-1.38,0.270),(0.14,0.74,0.014),V18_PCB,COL_PC,0.004)
+    for j in range(6):
+        box("V18_SODIMM_IC",V18P(x,-1.67+j*0.115,0.300),(0.090,0.075,0.020),V18_BLACK,COL_PC,0.003)
+    for y in (-1.78,-0.98):
+        box("V18_SODIMM_CLIP",V18P(x+0.18,y,0.255),(0.020,0.055,0.060),V18_ALU,COL_PC,0.003)
+
+# Q67/PCH, VRM, inductors, capacitors.
+box("V18_Q67",V18P(0.55,0.48,0.215),(0.36,0.36,0.055),V18_BLACK,COL_PC,0.010)
+for x in (-1.52,-1.30,-1.08,-0.86):
+    for y in (0.95,1.18,1.41):
+        box("V18_VRM",V18P(x,y,0.235),(0.075,0.075,0.050),V18_BLACK,COL_PC,0.007)
+for i in range(9):
+    cyl("V18_CAP",V18P(1.30,-0.55+i*0.18,0.245),0.045,0.095,V18_BLACK,COL_PC,seg=16)
+
+# ------------------------------------------------------------
+# REAL USDT EXPANSION: MXM + PCIe x1
+# ------------------------------------------------------------
+# MXM graphics module: compact horizontal card, NOT a desktop PCIe x16.
+box("V18_MXM_SLOT",V18P(1.30,1.08,0.225),(0.72,0.20,0.030),V18_BLACK,COL_PC,0.006)
+box("V18_MXM_CARD",V18P(1.30,1.45,0.265),(0.70,0.48,0.035),V18_DARK if 'V18_DARK' in globals() else V18_METAL,COL_PC,0.010)
+for i in range(8):
+    box("V18_MXM_CHIP",V18P(0.88+i*0.12,1.42,0.315),(0.045,0.12,0.020),V18_BLACK,COL_PC,0.003)
+box("V18_MXM_HEATSINK",V18P(1.30,1.45,0.37),(0.62,0.40,0.06),V18_ALU,COL_PC,0.012)
+
+# PCI Express x1 slot, short and unmistakably NOT x16.
+box("V18_PCIE_X1_SLOT",V18P(-1.28,1.22,0.225),(0.15,0.55,0.025),V18_BLACK,COL_PC,0.006)
+box("V18_PCIE_X1_CARD",V18P(-1.28,1.55,0.265),(0.11,0.30,0.025),V18_METAL,COL_PC,0.004)
+
+# Explicit board connector labels for service realism.
+text("V18_LABEL_MXM","MXM",(1.30,8.68,1.73),0.060,V18_WHITE,COL_PC)
+text("V18_LABEL_PCIE","PCIe x1",(-1.28,8.82,1.73),0.055,V18_WHITE,COL_PC)
+
+# SATA, power, hood sensor and media/USB connectors exactly as service manual categories.
+box("V18_SATA1",V18P(-1.55,-0.15,0.235),(0.14,0.32,0.035),V18_ALU,COL_PC,0.004)
+box("V18_SATA_PWR",V18P(-1.55,-0.62,0.235),(0.14,0.25,0.035),V18_WHITE,COL_PC,0.004)
+box("V18_HSENSE",V18P(1.60,-0.35,0.235),(0.11,0.18,0.035),V18_WHITE,COL_PC,0.003)
+box("V18_MEDIA_USB",V18P(1.58,-0.78,0.235),(0.12,0.24,0.035),V18_BLACK,COL_PC,0.003)
+
+# ------------------------------------------------------------
+# CPU HEATSINK — separate from rear fan
+# ------------------------------------------------------------
+box("V18_CPU_HEATSINK",V18P(-0.48,0.35,0.58),(0.74,0.74,0.095),V18_ALU,COL_PC,0.025)
+for i in range(9):
+    box("V18_HEATSINK_FIN",V18P(-0.84+i*0.09,0.35,0.72),(0.020,0.67,0.19),V18_ALU,COL_PC,0.004)
+for x,y in ((-0.83,-0.20),(-0.13,-0.20),(-0.83,0.90),(-0.13,0.90)):
+    cyl("V18_HEATSINK_SCREW",V18P(x,y,0.74),0.043,0.024,V18_ALU,COL_PC,seg=12)
+
+# ------------------------------------------------------------
+# STORAGE / OPTICAL — correct USDT arrangement
+# ------------------------------------------------------------
+# 2.5" HDD mounted under optical drive.
+box("V18_HDD_CARRIER",V18P(1.10,-0.45,0.28),(0.95,1.30,0.055),V18_METAL,COL_PC,0.022)
+box("V18_HDD",V18P(1.10,-0.45,0.36),(0.86,1.16,0.075),V18_DARK if 'V18_DARK' in globals() else V18_METAL,COL_PC,0.020)
+box("V18_HDD_LABEL",V18P(1.10,-0.45,0.412),(0.62,0.72,0.004),V18_WHITE,COL_PC,0.002)
+
+# Slim optical drive at front/above HDD.
+box("V18_ODD_BODY",V18P(1.10,-1.65,0.48),(1.05,0.52,0.10),V18_DARK if 'V18_DARK' in globals() else V18_METAL,COL_PC,0.022)
+box("V18_ODD_RAIL",V18P(1.10,-1.10,0.48),(1.05,0.035,0.10),V18_METAL,COL_PC,0.006)
+
+# ------------------------------------------------------------
+# FRONT FAN + REAR FAN
+# ------------------------------------------------------------
+# Front fan/duct.
+cyl("V18_FRONT_FAN",V18P(-1.70,-2.00,0.57),0.46,0.14,V18_BLACK,COL_PC,seg=48)
+torus("V18_FRONT_FAN_RING",V18P(-1.70,-2.00,0.64),0.40,0.030,V18_METAL,COL_PC,seg=48)
+cyl("V18_FRONT_HUB",V18P(-1.70,-2.00,0.70),0.10,0.030,V18_ALU,COL_PC,seg=24)
+for i in range(7):
+    a=2*math.pi*i/7
+    box("V18_FRONT_BLADE",V18P(-1.70+0.23*math.cos(a),-2.00+0.23*math.sin(a),0.71),(0.19,0.040,0.018),V18_BLACK,COL_PC,0.006,rot=(0,0,a+0.45))
+box("V18_FAN_DUCT",V18P(-1.12,-0.60,0.52),(0.20,1.20,0.48),V18_METAL,COL_PC,0.015)
+
+# Rear fan is mounted to rear chassis, not on CPU heatsink.
+cyl("V18_REAR_FAN",V18P(1.72,2.05,0.60),0.34,0.10,V18_BLACK,COL_PC,rot=(R90,0,0),seg=48)
+torus("V18_REAR_FAN_RING",V18P(1.72,2.00,0.60),0.31,0.025,V18_METAL,COL_PC,rot=(R90,0,0),seg=48)
+cyl("V18_REAR_HUB",V18P(1.72,1.94,0.60),0.09,0.025,V18_ALU,COL_PC,rot=(R90,0,0),seg=24)
+
+# Speaker and front I/O cage.
+box("V18_SPEAKER",V18P(-0.45,-2.08,0.43),(0.30,0.12,0.18),V18_BLACK,COL_PC,0.018)
+for i in range(6):
+    box("V18_SPEAKER_SLOT",V18P(-0.58+i*0.05,-2.20,0.43),(0.010,0.008,0.12),V18_METAL,COL_PC,0.002)
+
+# ------------------------------------------------------------
+# REAR I/O — physical connector array on the motherboard rear edge
+# ------------------------------------------------------------
+# Since the rear face is exposed in this presentation build, make the
+# actual motherboard connectors visible rather than a generic I/O plate.
+for i,x in enumerate((-1.95,-1.48,-1.01,-0.54,-0.07,0.40)):
+    box("V18_REAR_USB_PORT",V18P(x,V18_Y+0.060,0.88),(0.155,0.012,0.075),V18_RUB,COL_PC,0.005)
+
+# PS/2, VGA, DP, Ethernet, audio.
+cyl("V18_PS2_KB",V18P(0.95,V18_Y+0.065,0.94),0.105,0.022,V18_RUB,COL_PC,rot=(R90,0,0),seg=24)
+cyl("V18_PS2_MOUSE",V18P(1.25,V18_Y+0.065,0.94),0.105,0.022,V18_RUB,COL_PC,rot=(R90,0,0),seg=24)
+box("V18_VGA",V18P(1.55,V18_Y+0.065,0.55),(0.31,0.012,0.20),V18_METAL,COL_PC,0.008)
+box("V18_DP",V18P(1.95,V18_Y+0.065,0.55),(0.22,0.012,0.11),V18_RUB,COL_PC,0.006)
+box("V18_RJ45",V18P(2.18,V18_Y+0.065,0.55),(0.25,0.012,0.20),V18_METAL,COL_PC,0.008)
+for x in (1.55,1.78):
+    cyl("V18_AUDIO_REAR",V18P(x,V18_Y+0.067,0.30),0.052,0.018,V18_RUB,COL_PC,rot=(R90,0,0),seg=20)
+
+# DC input — clearly visible on rear and physically connected to external brick.
+cyl("V18_DC_INPUT",V18P(2.18,V18_Y+0.075,0.94),0.105,0.030,V18_BLACK,COL_PC,rot=(R90,0,0),seg=24)
+
+# ------------------------------------------------------------
+# EXTERNAL HP BRICK — mandatory visible part of the USDT
+# ------------------------------------------------------------
+box("V18_HP_135W_BRICK",(3.55,9.65,0.78),(0.72,1.10,0.20),V18_BLACK,COL_PC,0.070)
+box("V18_BRICK_LABEL",(3.55,8.54,0.80),(0.48,0.005,0.12),V18_WHITE,COL_PC,0.003)
+text("V18_BRICK_TEXT","HP 135W",(3.55,8.47,0.82),0.10,V18_BLACK,COL_PC)
+cable("V18_BRICK_DC_CABLE",[(2.30,9.74,0.94),(2.70,9.60,0.88),(3.05,9.55,0.82)],0.045,V18_RUB,COL_PC)
+cable("V18_AC_CABLE",[(4.00,10.70,0.78),(4.55,10.85,0.65),(5.10,10.55,0.55)],0.050,V18_RUB,COL_PC)
+
+# Final service labels, restrained.
+text("V18_SERVICE","HP COMPAQ 8200 ELITE USDT",V18P(-0.70,1.85,1.365),0.075,V18_WHITE,COL_PC)
+
+bpy.context.view_layer.update()
+print("V18 TECHNICAL HP COMPAQ 8200 USDT REBUILD COMPLETE — LAB UNCHANGED")
