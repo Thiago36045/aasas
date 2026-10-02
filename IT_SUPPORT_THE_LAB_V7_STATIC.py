@@ -3550,3 +3550,253 @@ print("Geometry changes: NO")
 print("Reflection sources: key / softbox / ceiling / blue rim")
 print("Palette: deep black + neutral metal + cool lab + warm key + blue rim")
 print("="*70)
+
+
+# ============================================================
+# V14.7 → V15.3 — REALISM STACK
+# Shader/material/lighting/world only.
+# NO NEW MESHES. NO OBJECT TRANSFORMS. NO CAMERA CHANGES.
+# ============================================================
+
+def _vr_mat(name):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes: return None,None
+    return m,m.node_tree.nodes.get("Principled BSDF")
+
+def _vr_val(bs,n,v):
+    if bs and n in bs.inputs and not bs.inputs[n].is_linked:
+        bs.inputs[n].default_value=v
+
+def _vr_noise(mat_name,node_name,scale,detail=3.0,rough=0.55):
+    m=bpy.data.materials.get(mat_name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get(node_name): return
+    nt=m.node_tree; tc=nt.nodes.get("Texture Coordinate")
+    bs=nt.nodes.get("Principled BSDF")
+    if not tc or not bs: return
+    n=nt.nodes.new("ShaderNodeTexNoise"); n.name=node_name
+    n.inputs["Scale"].default_value=scale
+    n.inputs["Detail"].default_value=detail
+    n.inputs["Roughness"].default_value=rough
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    return n
+
+# ------------------------------------------------------------
+# V14.7 — PHYSICAL IMPERFECTIONS
+# ------------------------------------------------------------
+
+# Directional micro-scratches: Wave + Noise, normal-only so silhouettes stay untouched.
+def _vr_directional_scratches(name,scale=240.0,strength=0.004):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get("V147_SCRATCHES"): return
+    nt=m.node_tree; bs=nt.nodes.get("Principled BSDF"); tc=nt.nodes.get("Texture Coordinate")
+    if not bs or not tc: return
+    w=nt.nodes.new("ShaderNodeTexWave"); w.name="V147_SCRATCHES"
+    w.wave_type="BANDS"; w.bands_direction="X"
+    w.inputs["Scale"].default_value=scale
+    w.inputs["Distortion"].default_value=5.0
+    w.inputs["Detail"].default_value=4.0
+    nt.links.new(tc.outputs["Object"],w.inputs["Vector"])
+    n=nt.nodes.new("ShaderNodeTexNoise"); n.name="V147_SCRATCH_NOISE"
+    n.inputs["Scale"].default_value=3.5
+    n.inputs["Detail"].default_value=2.0
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    mix=nt.nodes.new("ShaderNodeMixRGB"); mix.blend_type="MULTIPLY"
+    mix.inputs[0].default_value=0.72
+    nt.links.new(w.outputs["Color"],mix.inputs[1]); nt.links.new(n.outputs["Fac"],mix.inputs[2])
+    b=nt.nodes.new("ShaderNodeBump"); b.inputs["Strength"].default_value=strength
+    b.inputs["Distance"].default_value=0.0007
+    nt.links.new(mix.outputs["Color"],b.inputs["Height"])
+    nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
+
+for _n,_s,_b in [("HP Black Plastic",260,0.0035),("Steel",300,0.003),("Aluminum",360,0.0025),("Perforated Metal",330,0.0025)]:
+    _vr_directional_scratches(_n,_s,_b)
+
+# Piece-to-piece manufacturing variation.
+for _n,_rough in {
+    "HP Black Plastic":0.31,"Plastic Black":0.37,"Plastic White":0.33,
+    "Steel":0.225,"Aluminum":0.205,"Perforated Metal":0.275,
+    "Anodized Black":0.28,"PCB":0.29
+}.items():
+    _m,_bs=_vr_mat(_n)
+    _vr_val(_bs,"Roughness",_rough)
+
+# Subtle color drift on black plastic; not enough to look painted.
+def _vr_plastic_color(name):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get("V147_PLASTIC_VARIATION"): return
+    nt=m.node_tree; bs=nt.nodes.get("Principled BSDF"); tc=nt.nodes.get("Texture Coordinate")
+    if not bs or not tc or "Base Color" not in bs.inputs: return
+    n=nt.nodes.new("ShaderNodeTexNoise"); n.name="V147_PLASTIC_VARIATION"
+    n.inputs["Scale"].default_value=18.0; n.inputs["Detail"].default_value=2.0
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    ramp=nt.nodes.new("ShaderNodeValToRGB"); ramp.color_ramp.elements[0].color=(0.006,0.007,0.009,1)
+    ramp.color_ramp.elements[1].color=(0.015,0.017,0.021,1)
+    nt.links.new(n.outputs["Fac"],ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
+
+_vr_plastic_color("HP Black Plastic")
+_vr_plastic_color("Plastic Black")
+
+# ------------------------------------------------------------
+# V14.8 — ELECTRONICS
+# ------------------------------------------------------------
+
+# Existing materials only: different optical response for real component classes.
+for _n,_rough in {
+    "CPU":0.22,"CPU IHS":0.17,"Chipset":0.27,"RAM":0.29,
+    "Heatsink":0.19,"Fan":0.37,"SATA Cable":0.43,
+    "Power Cable":0.45,"ODD Cable":0.41,"Thermal Paste":0.25,
+    "Thermal Paste New":0.25,"Thermal Paste Dry":0.84
+}.items():
+    _m,_bs=_vr_mat(_n); _vr_val(_bs,"Roughness",_rough)
+
+# PCB variation by zone: extremely subtle bump/roughness noise.
+for _n in ("PCB","V13 FR4 Photoreal"):
+    _vr_noise(_n,"V148_PCB_GRAIN",420.0,4.0,0.58)
+
+# Copper, solder and contacts use existing materials if present.
+for _n,_metal,_rough in [
+    ("Copper",1.0,0.23),("Gold",1.0,0.18),("Solder",0.82,0.30),
+    ("RAM Contacts",0.95,0.16),("CPU IHS",0.92,0.17)
+]:
+    _m,_bs=_vr_mat(_n)
+    _vr_val(_bs,"Metallic",_metal); _vr_val(_bs,"Roughness",_rough)
+
+# Fan and cable surfaces get independent microtexture.
+for _n,_scale in [("Fan",180.0),("SATA Cable",150.0),("Power Cable",150.0),("ODD Cable",150.0)]:
+    _vr_noise(_n,"V148_COMPONENT_GRAIN",_scale,3.0,0.55)
+
+# ------------------------------------------------------------
+# V14.9 — LIVED-IN LAB
+# ------------------------------------------------------------
+
+# Existing architecture materials: subtle non-uniformity.
+for _n,_scale in [
+    ("Wall Panel Side",85.0),("Wall Panel Back",85.0),
+    ("Ceiling Panel",70.0),("Floor",65.0),("Floor Tile",90.0)
+]:
+    _vr_noise(_n,"V149_SURFACE_VARIATION",_scale,3.0,0.62)
+
+# Floor gets tiny tonal/roughness variation without visible dirt patches.
+_m,_bs=_vr_mat("Floor")
+_vr_val(_bs,"Roughness",0.19)
+_m,_bs=_vr_mat("Floor Tile")
+_vr_val(_bs,"Roughness",0.225)
+
+# Contact/depth cues: use existing AO-capable materials/world rather than geometry.
+try:
+    scene.world.color=(0.004,0.006,0.010)
+except Exception: pass
+
+# ------------------------------------------------------------
+# V15 — ADVANCED LIGHTING
+# ------------------------------------------------------------
+
+def _vr_light(name,energy,color,size=None):
+    o=bpy.data.objects.get(name)
+    if not o or o.type!="LIGHT": return
+    o.data.energy=energy*LIGHT_SCALE; o.data.color=color
+    if size is not None and o.data.type=="AREA": o.data.size=size
+    try: o.data.use_shadow=True
+    except Exception: pass
+
+_vr_light("KEY_LIGHT",960,(1.0,0.975,0.94),7.5)
+_vr_light("FILL_LIGHT",145,(0.74,0.80,0.90),8.5)
+_vr_light("HERO_KEY",1180,(1.0,0.985,0.95),4.0)
+_vr_light("HERO_TOP",540,(1.0,0.97,0.91),3.4)
+_vr_light("HERO_RIM",315,(0.20,0.37,1.0),3.8)
+_vr_light("BACK_LIGHT",285,(0.38,0.52,0.78),6.5)
+_vr_light("V14_SOFTBOX",545,(1.0,0.99,0.97),7.0)
+_vr_light("V14_RIM_SOFT",245,(0.32,0.51,1.0),5.5)
+
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("CEILING_PRACTICAL"):
+        _o.data.energy=130*LIGHT_SCALE; _o.data.color=(0.90,0.95,1.0)
+        if _o.data.type=="AREA": _o.data.size=3.6
+    elif _o.type=="LIGHT" and _o.name.startswith("SERVER_PRACTICAL"):
+        _o.data.energy=8*LIGHT_SCALE; _o.data.color=(0.18,0.36,1.0)
+
+# Screen/command accents stay emissive-looking but contribute very little room light.
+for _o in scene.objects:
+    if _o.type=="LIGHT" and ("SCREEN" in _o.name.upper() or "DISPLAY" in _o.name.upper()):
+        _o.data.energy=min(_o.data.energy,18*LIGHT_SCALE)
+
+# ------------------------------------------------------------
+# V15.1 — SECONDARY MATERIAL CALIBRATION
+# ------------------------------------------------------------
+
+for _n,_metal,_rough,_coat in [
+    ("Rubber",0.0,0.76,0.02),("Glass",0.0,0.014,0.10),
+    ("Plastic Black",0.0,0.37,0.20),("Plastic White",0.0,0.32,0.20),
+    ("Anodized Black",0.88,0.28,0.14),("Perforated Metal",1.0,0.275,0.07)
+]:
+    _m,_bs=_vr_mat(_n)
+    _vr_val(_bs,"Metallic",_metal); _vr_val(_bs,"Roughness",_rough)
+    if _bs:
+        for _coat_name in ("Coat Weight","Coat"):
+            _vr_val(_bs,_coat_name,_coat)
+
+# ------------------------------------------------------------
+# V15.2 — SCREEN MATERIAL REALISM
+# ------------------------------------------------------------
+
+def _vr_screen_material(name):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get("V152_SCREEN"): return
+    nt=m.node_tree; bs=nt.nodes.get("Principled BSDF"); tc=nt.nodes.get("Texture Coordinate")
+    if not bs or not tc: return
+    n=nt.nodes.new("ShaderNodeTexNoise"); n.name="V152_SCREEN"
+    n.inputs["Scale"].default_value=220.0; n.inputs["Detail"].default_value=2.0
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    if "Roughness" in bs.inputs and not bs.inputs["Roughness"].is_linked:
+        bs.inputs["Roughness"].default_value=0.055
+
+for _n in ("Screen","Screen Glass","Display Glass","Glass"):
+    _vr_screen_material(_n)
+
+# Keep screen/LED glow restrained. Existing emission is not replaced.
+for _m in bpy.data.materials:
+    if not _m.use_nodes: continue
+    _bs=_m.node_tree.nodes.get("Principled BSDF")
+    if _bs and "Emission Strength" in _bs.inputs:
+        try:
+            _bs.inputs["Emission Strength"].default_value=min(_bs.inputs["Emission Strength"].default_value,2.2)
+        except Exception: pass
+
+# ------------------------------------------------------------
+# V15.3 — VERY SUBTLE ATMOSPHERE
+# No volume objects. World volume only, extremely weak.
+# ------------------------------------------------------------
+
+try:
+    _wn=scene.world.node_tree.nodes
+    _wout=_wn.get("World Output")
+    _bg=_wn.get("Background")
+    if _wout and "Volume" in _wout.inputs:
+        _vol=_wn.get("V153_SUBTLE_ATMOSPHERE")
+        if not _vol:
+            _vol=_wn.new("ShaderNodeVolumePrincipled"); _vol.name="V153_SUBTLE_ATMOSPHERE"
+        _vol.inputs["Density"].default_value=0.0035
+        if "Color" in _vol.inputs:
+            _vol.inputs["Color"].default_value=(0.60,0.72,0.90,1.0)
+        scene.world.node_tree.links.new(_vol.outputs["Volume"],_wout.inputs["Volume"])
+    if _bg:
+        _bg.inputs["Strength"].default_value=0.115
+        _bg.inputs["Color"].default_value=(0.006,0.009,0.015,1.0)
+except Exception:
+    pass
+
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.look="AgX - Medium High Contrast"
+    scene.view_settings.exposure=-0.08
+except Exception: pass
+
+print("="*70)
+print("V14.7 → V15.3 — REALISM STACK COMPLETE")
+print("Geometry created: NO")
+print("Geometry moved: NO")
+print("Camera changed: NO")
+print("Micro imperfections / electronics / lived-in environment")
+print("Advanced lighting / secondary materials / screens / subtle atmosphere")
+print("="*70)
