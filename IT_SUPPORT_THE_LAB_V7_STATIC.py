@@ -378,6 +378,60 @@ CABLE_MATS = [MAT_PL_BLUE, MAT_PL_YELLOW, MAT_PL_RED, MAT_PL_GREEN, MAT_PL_ORANG
 
 
 # ============================================================
+# V7 VIEWPORT / MATERIAL DISPLAY
+# Fuerza colores reales en Solid y Material Preview.
+# Blender puede mostrar todo blanco si el viewport esta en
+# Color: SINGLE o si los objetos no tienen color de viewport.
+# ============================================================
+
+def setup_viewport_material_colors():
+    # Colores de viewport por material: conserva los colores de la escena
+    # incluso antes de entrar a Rendered.
+    for m in bpy.data.materials:
+        try:
+            if m.use_nodes:
+                bsdf = m.node_tree.nodes.get("Principled BSDF")
+                if bsdf and "Base Color" in bsdf.inputs:
+                    c = bsdf.inputs["Base Color"].default_value
+                    m.diffuse_color = (c[0], c[1], c[2], 1.0)
+        except Exception:
+            pass
+
+    # Cada objeto hereda el color de su material.
+    for o in scene.objects:
+        if o.type != "MESH" or not o.data.materials:
+            continue
+        try:
+            m = o.data.materials[0]
+            if m:
+                o.color = m.diffuse_color
+        except Exception:
+            pass
+
+    # Solid: mostrar MATERIAL, no SINGLE/OBJECT aleatorio.
+    # Material Preview/Rendered quedan habilitados normalmente.
+    try:
+        for screen in bpy.data.screens:
+            for space in screen.spaces:
+                if space.type == "VIEW_3D":
+                    sh = space.shading
+                    sh.color_type = "MATERIAL"
+                    sh.show_shadows = True
+                    sh.show_cavity = True
+                    try:
+                        sh.cavity_type = "WORLD"
+                        sh.curvature_ridge_factor = 1.6
+                        sh.curvature_valley_factor = 1.2
+                    except Exception:
+                        pass
+    except Exception as e:
+        print("Viewport colors:", e)
+
+
+setup_viewport_material_colors()
+
+
+# ============================================================
 # 2. GEOMETRIA SIN bpy.ops
 # ============================================================
 
