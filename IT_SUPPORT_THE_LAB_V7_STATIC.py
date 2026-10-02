@@ -1330,6 +1330,9 @@ def _v75_bump(nt, bsdf, fac, strength=0.12, distance=0.03):
     b = nt.nodes.new("ShaderNodeBump")
     b.inputs["Strength"].default_value = strength
     b.inputs["Distance"].default_value = distance
+    # fac debe ser un NodeSocket (por ejemplo noise.outputs["Fac"]), no el nodo.
+    if hasattr(fac, "bl_idname") and fac.bl_idname.startswith("ShaderNode"):
+        fac = fac.outputs.get("Fac") or fac.outputs.get("Value") or fac.outputs[0]
     nt.links.new(fac, b.inputs["Height"])
     nt.links.new(b.outputs["Normal"], bsdf.inputs["Normal"])
 
