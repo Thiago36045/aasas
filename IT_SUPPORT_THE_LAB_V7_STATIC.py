@@ -3800,3 +3800,413 @@ print("Camera changed: NO")
 print("Micro imperfections / electronics / lived-in environment")
 print("Advanced lighting / secondary materials / screens / subtle atmosphere")
 print("="*70)
+
+
+# ============================================================
+# V15.4 → V16 — MANUFACTURING / CABLE / MAINTENANCE / PCB /
+# SCREEN / VOLUMETRIC / GLOBAL MICRO-IMPERFECTION
+# Shader + material + lighting only.
+# NO NEW MESHES. NO CABLES. NO OBJECT TRANSFORMS. NO CAMERAS.
+# ============================================================
+
+def _v16_mat(name):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes:
+        return None, None, None
+    return m, m.node_tree, m.node_tree.nodes.get("Principled BSDF")
+
+def _v16_input(bs, name, value):
+    if bs and name in bs.inputs and not bs.inputs[name].is_linked:
+        bs.inputs[name].default_value=value
+
+def _v16_noise(nt, tc, name, scale, detail=2.0, rough=0.55):
+    n=nt.nodes.get(name)
+    if n:
+        return n
+    n=nt.nodes.new("ShaderNodeTexNoise")
+    n.name=name
+    n.inputs["Scale"].default_value=scale
+    n.inputs["Detail"].default_value=detail
+    n.inputs["Roughness"].default_value=rough
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    return n
+
+# ------------------------------------------------------------
+# V15.4 — REALISMO DE FABRICACION
+# ------------------------------------------------------------
+
+# Piece-to-piece roughness fingerprints. These are intentionally
+# small so the HP still reads as one manufactured product.
+for _n,_r in {
+    "HP Black Plastic":0.305,
+    "Plastic Black":0.375,
+    "Plastic White":0.325,
+    "Steel":0.225,
+    "Aluminum":0.205,
+    "Anodized Black":0.285,
+    "Perforated Metal":0.278,
+    "Keyboard Keys":0.405
+}.items():
+    _m,_nt,_bs=_v16_mat(_n)
+    _v16_input(_bs,"Roughness",_r)
+
+def _v154_manufacturing(name, scale=95.0, bump_strength=0.0018):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V154_MANUFACTURING"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+
+    # Low-frequency manufacturing variation.
+    n=_v16_noise(_nt,tc,"V154_MANUFACTURING",scale,2.0,0.52)
+
+    # Directional processing texture, kept extremely weak.
+    w=_nt.nodes.new("ShaderNodeTexWave")
+    w.name="V154_MOLD_DIRECTION"
+    w.wave_type="BANDS"
+    w.bands_direction="X"
+    w.inputs["Scale"].default_value=115.0
+    w.inputs["Distortion"].default_value=2.0
+    w.inputs["Detail"].default_value=2.0
+    _nt.links.new(tc.outputs["Object"],w.inputs["Vector"])
+
+    mix=_nt.nodes.new("ShaderNodeMixRGB")
+    mix.name="V154_MOLD_MIX"
+    mix.blend_type="MULTIPLY"
+    mix.inputs[0].default_value=0.18
+    _nt.links.new(n.outputs["Fac"],mix.inputs[1])
+    _nt.links.new(w.outputs["Color"],mix.inputs[2])
+
+    b=_nt.nodes.new("ShaderNodeBump")
+    b.name="V154_MOLD_BUMP"
+    b.inputs["Strength"].default_value=bump_strength
+    b.inputs["Distance"].default_value=0.00035
+    _nt.links.new(mix.outputs["Color"],b.inputs["Height"])
+
+    # Only connect if the current normal chain has not already been
+    # occupied by a previous realism pass.
+    if not _bs.inputs["Normal"].is_linked:
+        _nt.links.new(b.outputs["Normal"],_bs.inputs["Normal"])
+
+for _n,_s,_b in [
+    ("HP Black Plastic",95.0,0.0018),
+    ("Plastic Black",110.0,0.0015),
+    ("Plastic White",105.0,0.0015),
+    ("Steel",170.0,0.0010),
+    ("Aluminum",190.0,0.0009),
+    ("Anodized Black",150.0,0.0010)
+]:
+    _v154_manufacturing(_n,_s,_b)
+
+# Slightly imperfect printed/label response without touching text geometry.
+for _n in ("Barcode Sticker","Label White"):
+    _m,_nt,_bs=_v16_mat(_n)
+    if _bs:
+        _v16_input(_bs,"Roughness",0.46)
+        if _nt.nodes.get("V154_PRINT_VARIATION") is None:
+            tc=_nt.nodes.get("Texture Coordinate")
+            if tc:
+                nn=_v16_noise(_nt,tc,"V154_PRINT_VARIATION",145.0,2.0,0.5)
+                if not _bs.inputs["Roughness"].is_linked:
+                    mp=_nt.nodes.new("ShaderNodeMapRange")
+                    mp.name="V154_PRINT_ROUGHNESS"
+                    mp.inputs["From Min"].default_value=0.25
+                    mp.inputs["From Max"].default_value=0.75
+                    mp.inputs["To Min"].default_value=0.40
+                    mp.inputs["To Max"].default_value=0.52
+                    _nt.links.new(nn.outputs["Fac"],mp.inputs["Value"])
+                    _nt.links.new(mp.outputs["Result"],_bs.inputs["Roughness"])
+
+# ------------------------------------------------------------
+# V15.5 — CABLES REALISTAS
+# Existing cable materials only. No new cables.
+# ------------------------------------------------------------
+
+for _n,_r in {
+    "SATA Cable":0.46,
+    "Power Cable":0.48,
+    "ODD Cable":0.44,
+    "Rubber":0.78,
+    "Plastic Black":0.38
+}.items():
+    _m,_nt,_bs=_v16_mat(_n)
+    _v16_input(_bs,"Roughness",_r)
+
+def _v155_cable(name, scale=180.0):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V155_CABLE"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+    n=_v16_noise(_nt,tc,"V155_CABLE",scale,3.0,0.62)
+    mp=_nt.nodes.new("ShaderNodeMapRange")
+    mp.name="V155_CABLE_ROUGHNESS"
+    mp.inputs["From Min"].default_value=0.25
+    mp.inputs["From Max"].default_value=0.75
+    mp.inputs["To Min"].default_value=0.39
+    mp.inputs["To Max"].default_value=0.53
+    _nt.links.new(n.outputs["Fac"],mp.inputs["Value"])
+    if not _bs.inputs["Roughness"].is_linked:
+        _nt.links.new(mp.outputs["Result"],_bs.inputs["Roughness"])
+    if not _bs.inputs["Normal"].is_linked:
+        b=_nt.nodes.new("ShaderNodeBump")
+        b.name="V155_CABLE_BUMP"
+        b.inputs["Strength"].default_value=0.018
+        b.inputs["Distance"].default_value=0.001
+        _nt.links.new(n.outputs["Fac"],b.inputs["Height"])
+        _nt.links.new(b.outputs["Normal"],_bs.inputs["Normal"])
+
+for _n,_s in [("SATA Cable",185.0),("Power Cable",170.0),("ODD Cable",175.0)]:
+    _v155_cable(_n,_s)
+
+# Connector/plastic optical response, using existing component classes.
+for _n in ("Plastic Black","Plastic White","Anodized Black"):
+    _m,_nt,_bs=_v16_mat(_n)
+    if _bs:
+        _v16_input(_bs,"Coat Weight",0.12)
+        _v16_input(_bs,"Coat Roughness",0.13)
+
+# ------------------------------------------------------------
+# V15.6 — SEÑALES DE MANTENIMIENTO
+# Shader-only. No dirt meshes.
+# ------------------------------------------------------------
+
+def _v156_maintenance(name, scale=32.0):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V156_MAINTENANCE"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+    n=_v16_noise(_nt,tc,"V156_MAINTENANCE",scale,4.0,0.65)
+
+    # Broad variation: handled areas become microscopically smoother,
+    # while untouched areas remain slightly more matte.
+    mp=_nt.nodes.new("ShaderNodeMapRange")
+    mp.name="V156_MAINTENANCE_ROUGHNESS"
+    mp.inputs["From Min"].default_value=0.20
+    mp.inputs["From Max"].default_value=0.80
+    mp.inputs["To Min"].default_value=0.28
+    mp.inputs["To Max"].default_value=0.36
+    _nt.links.new(n.outputs["Fac"],mp.inputs["Value"])
+    if not _bs.inputs["Roughness"].is_linked:
+        _nt.links.new(mp.outputs["Result"],_bs.inputs["Roughness"])
+
+for _n,_s in [
+    ("HP Black Plastic",28.0),
+    ("Plastic Black",24.0),
+    ("Plastic White",24.0),
+    ("Steel",18.0),
+    ("Aluminum",18.0)
+]:
+    _v156_maintenance(_n,_s)
+
+# Ventilation/contact materials stay matte enough to imply dust accumulation
+# without making the scene visibly dirty.
+for _n,_r in (("Dust",0.96),("Rubber",0.79),("Floor",0.19),("Floor Tile",0.225)):
+    _m,_nt,_bs=_v16_mat(_n)
+    _v16_input(_bs,"Roughness",_r)
+
+# ------------------------------------------------------------
+# V15.7 — PCB DE NIVEL MACRO
+# ------------------------------------------------------------
+
+def _v157_pcb(name):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V157_PCB_MACRO"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+
+    n=_v16_noise(_nt,tc,"V157_PCB_MACRO",38.0,5.0,0.58)
+
+    # Solder-mask color variation: extremely small.
+    ramp=_nt.nodes.new("ShaderNodeValToRGB")
+    ramp.name="V157_SOLDER_MASK_VARIATION"
+    ramp.color_ramp.elements[0].color=(0.006,0.055,0.018,1)
+    ramp.color_ramp.elements[1].color=(0.010,0.075,0.026,1)
+    _nt.links.new(n.outputs["Fac"],ramp.inputs["Fac"])
+
+    # Only replace Base Color when no earlier procedural color link exists.
+    if not _bs.inputs["Base Color"].is_linked:
+        _nt.links.new(ramp.outputs["Color"],_bs.inputs["Base Color"])
+
+    if not _bs.inputs["Roughness"].is_linked:
+        mp=_nt.nodes.new("ShaderNodeMapRange")
+        mp.name="V157_PCB_ROUGHNESS"
+        mp.inputs["From Min"].default_value=0.20
+        mp.inputs["From Max"].default_value=0.80
+        mp.inputs["To Min"].default_value=0.25
+        mp.inputs["To Max"].default_value=0.34
+        _nt.links.new(n.outputs["Fac"],mp.inputs["Value"])
+        _nt.links.new(mp.outputs["Result"],_bs.inputs["Roughness"])
+
+    if not _bs.inputs["Normal"].is_linked:
+        b=_nt.nodes.new("ShaderNodeBump")
+        b.name="V157_PCB_RELIEF"
+        b.inputs["Strength"].default_value=0.035
+        b.inputs["Distance"].default_value=0.0007
+        _nt.links.new(n.outputs["Fac"],b.inputs["Height"])
+        _nt.links.new(b.outputs["Normal"],_bs.inputs["Normal"])
+
+for _n in ("PCB","V13 FR4 Photoreal"):
+    _v157_pcb(_n)
+
+for _n,_metal,_rough in [
+    ("Copper",1.0,0.22),
+    ("Gold",1.0,0.17),
+    ("Solder",0.82,0.28),
+    ("RAM Contacts",0.96,0.15),
+    ("CPU IHS",0.92,0.17)
+]:
+    _m,_nt,_bs=_v16_mat(_n)
+    _v16_input(_bs,"Metallic",_metal)
+    _v16_input(_bs,"Roughness",_rough)
+
+# ------------------------------------------------------------
+# V15.8 — PANTALLAS FISICAS
+# Emission stays as the image. Glass gets reflection/roughness.
+# ------------------------------------------------------------
+
+def _v158_screen(name):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V158_SCREEN_PHYSICAL"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+
+    n=_v16_noise(_nt,tc,"V158_SCREEN_PHYSICAL",260.0,2.0,0.48)
+
+    # Very fine display-surface microtexture.
+    if not _bs.inputs["Normal"].is_linked:
+        b=_nt.nodes.new("ShaderNodeBump")
+        b.name="V158_SCREEN_MICRORELIEF"
+        b.inputs["Strength"].default_value=0.006
+        b.inputs["Distance"].default_value=0.0002
+        _nt.links.new(n.outputs["Fac"],b.inputs["Height"])
+        _nt.links.new(b.outputs["Normal"],_bs.inputs["Normal"])
+
+    _v16_input(_bs,"Roughness",0.048)
+    _v16_input(_bs,"Coat Weight",0.18)
+    _v16_input(_bs,"Coat Roughness",0.055)
+
+for _n in ("Screen","Screen Big","Screen HUD","LCD"):
+    _v158_screen(_n)
+
+for _n in ("Glass","Screen Glass","Display Glass"):
+    _m,_nt,_bs=_v16_mat(_n)
+    if _bs:
+        _v16_input(_bs,"Roughness",0.018)
+        _v16_input(_bs,"Coat Weight",0.30)
+        _v16_input(_bs,"Coat Roughness",0.035)
+
+# ------------------------------------------------------------
+# V15.9 — ILUMINACION VOLUMETRICA AVANZADA
+# Extremely restrained: the atmosphere should be felt, not seen.
+# ------------------------------------------------------------
+
+try:
+    _wn=scene.world.node_tree.nodes
+    _wout=_wn.get("World Output")
+    _vol=_wn.get("V153_SUBTLE_ATMOSPHERE")
+    if _vol and _wout and "Volume" in _wout.inputs:
+        _vol.inputs["Density"].default_value=0.0018
+        if "Color" in _vol.inputs:
+            _vol.inputs["Color"].default_value=(0.68,0.78,0.92,1.0)
+        if not _vol.outputs["Volume"].is_linked:
+            scene.world.node_tree.links.new(_vol.outputs["Volume"],_wout.inputs["Volume"])
+except Exception:
+    pass
+
+# Keep actual lights responsible for the beams. No volume meshes.
+for _name,_energy,_color in [
+    ("HERO_RIM",300,(0.20,0.36,1.0)),
+    ("HERO_KEY",1160,(1.0,0.985,0.95)),
+    ("KEY_LIGHT",940,(1.0,0.975,0.94))
+]:
+    _o=bpy.data.objects.get(_name)
+    if _o and _o.type=="LIGHT":
+        _o.data.energy=_energy*LIGHT_SCALE
+        _o.data.color=_color
+
+# ------------------------------------------------------------
+# V16 — GLOBAL MICROIMPERFECTION: UNIQUE MATERIAL FINGERPRINTS
+# Each material class receives its own scale/roughness character.
+# Existing links are respected; this pass never destroys a previous
+# Base Color / Roughness / Normal chain.
+# ------------------------------------------------------------
+
+_V16_PROFILES={
+    "HP Black Plastic":(52.0,0.010,0.0010),
+    "Plastic Black":(70.0,0.013,0.0010),
+    "Plastic White":(64.0,0.010,0.0009),
+    "Steel":(120.0,0.008,0.0006),
+    "Aluminum":(145.0,0.007,0.0005),
+    "Anodized Black":(105.0,0.009,0.0006),
+    "Perforated Metal":(130.0,0.009,0.0007),
+    "Rubber":(95.0,0.018,0.0012),
+    "PCB":(210.0,0.006,0.0005),
+    "Glass":(180.0,0.004,0.00025),
+    "Keyboard Keys":(82.0,0.012,0.0009),
+    "Floor":(24.0,0.010,0.0010),
+    "Floor Tile":(31.0,0.009,0.0009),
+    "Wall Panel Side":(42.0,0.007,0.0007),
+    "Wall Panel Back":(46.0,0.007,0.0007),
+    "Ceiling Panel":(38.0,0.006,0.0006)
+}
+
+def _v16_fingerprint(name, profile):
+    _m,_nt,_bs=_v16_mat(name)
+    if not _nt or not _bs or _nt.nodes.get("V16_MATERIAL_FINGERPRINT"):
+        return
+    tc=_nt.nodes.get("Texture Coordinate")
+    if not tc:
+        return
+    scale,variation,bump_strength=profile
+    n=_v16_noise(_nt,tc,"V16_MATERIAL_FINGERPRINT",scale,3.0,0.57)
+
+    # If roughness is already procedural, do not replace it.
+    # Otherwise add a tiny unique roughness variation.
+    if not _bs.inputs["Roughness"].is_linked:
+        mp=_nt.nodes.new("ShaderNodeMapRange")
+        mp.name="V16_FINGERPRINT_ROUGHNESS"
+        mp.inputs["From Min"].default_value=0.25
+        mp.inputs["From Max"].default_value=0.75
+        mp.inputs["To Min"].default_value=max(0.02,0.45-variation)
+        mp.inputs["To Max"].default_value=min(0.98,0.45+variation)
+        _nt.links.new(n.outputs["Fac"],mp.inputs["Value"])
+        _nt.links.new(mp.outputs["Result"],_bs.inputs["Roughness"])
+
+    # Add only a microscopic bump if the material has no normal chain.
+    if not _bs.inputs["Normal"].is_linked:
+        b=_nt.nodes.new("ShaderNodeBump")
+        b.name="V16_FINGERPRINT_BUMP"
+        b.inputs["Strength"].default_value=bump_strength
+        b.inputs["Distance"].default_value=0.00025
+        _nt.links.new(n.outputs["Fac"],b.inputs["Height"])
+        _nt.links.new(b.outputs["Normal"],_bs.inputs["Normal"])
+
+for _n,_p in _V16_PROFILES.items():
+    _v16_fingerprint(_n,_p)
+
+# Final conservative color/exposure lock: preserve the established V15.3 look.
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.look="AgX - Medium High Contrast"
+    scene.view_settings.exposure=-0.08
+except Exception:
+    pass
+
+print("="*70)
+print("V15.4 → V16 — MANUFACTURING + CABLES + MAINTENANCE + PCB")
+print("SCREEN PHYSICS + ULTRA-SUBTLE VOLUMETRICS + GLOBAL MATERIAL FINGERPRINTS")
+print("Geometry created: NO")
+print("Cables created: NO")
+print("Objects transformed: NO")
+print("Cameras changed: NO")
+print("All realism added through existing materials, shaders and lights.")
+print("="*70)
