@@ -3029,6 +3029,8 @@ V16_SOLDER=_pbr15("V16 Bright Solder",(0.52,0.55,0.58),0.95,0.11)
 V16_IC=_pbr15("V16 IC Package",(0.004,0.006,0.008),0.12,0.22)
 V16_GOLD=_pbr15("V16 ENIG Contacts",(0.86,0.54,0.07),0.99,0.10)
 V16_MARK=_pbr15("V16 Laser Marking",(0.70,0.72,0.68),0.02,0.36)
+# Compatibility aliases used by the V16 hardware-detail pass.
+V16_SILVER=_pbr15("V16 Silver Hardware",(0.42,0.45,0.48),0.92,0.20)
 V18_CABLE=_pbr15("V18 Cat6",(0.012,0.018,0.024),0.01,0.48)
 V18_FIBER=_pbr15("V18 Fiber",(0.18,0.012,0.04),0.01,0.38)
 V18_POWER=_pbr15("V18 IEC",(0.005,0.006,0.007),0.01,0.65)
