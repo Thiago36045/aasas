@@ -2809,3 +2809,172 @@ print("="*70)
 # ============================================================
 # END CLEAN MASTER
 # ============================================================
+
+
+# ============================================================
+# V14.1 — PBR MATERIALS + CINEMATIC LIGHTING
+# Base: V14 limpia. SOLO materiales y luces.
+# NO crea geometria. NO mueve geometria.
+# ============================================================
+
+def _v141_pbr(name, metallic=None, rough=None, base=None, coat=None,
+              coat_rough=None, transmission=None, ior=None):
+    m = bpy.data.materials.get(name)
+    if not m or not m.use_nodes:
+        return
+    bs = m.node_tree.nodes.get("Principled BSDF")
+    if not bs:
+        return
+
+    def put(key, value):
+        if key in bs.inputs and value is not None:
+            bs.inputs[key].default_value = value
+
+    if base is not None:
+        put("Base Color", (*base, 1.0))
+    if metallic is not None:
+        put("Metallic", metallic)
+    if rough is not None:
+        put("Roughness", rough)
+    if coat is not None:
+        put("Coat Weight", coat)
+    if coat_rough is not None:
+        put("Coat Roughness", coat_rough)
+    if transmission is not None:
+        put("Transmission Weight", transmission)
+    if ior is not None:
+        put("IOR", ior)
+
+# --- METAL REALISTA ---
+_v141_pbr("Steel", metallic=1.0, rough=0.26, coat=0.12, coat_rough=0.08)
+_v141_pbr("Aluminum", metallic=1.0, rough=0.23, coat=0.10, coat_rough=0.08)
+_v141_pbr("Copper", metallic=1.0, rough=0.25)
+_v141_pbr("Gold", metallic=1.0, rough=0.20)
+_v141_pbr("Perforated Metal", metallic=1.0, rough=0.30)
+_v141_pbr("Anodized Black", metallic=0.88, rough=0.28, coat=0.16, coat_rough=0.10)
+
+# --- PLASTICO TECNICO ---
+for _name, _rough, _coat in (
+    ("HP Black Plastic", 0.34, 0.26),
+    ("Plastic Black", 0.38, 0.22),
+    ("Plastic White", 0.32, 0.22),
+    ("Plastic Red", 0.34, 0.20),
+    ("Plastic Blue", 0.34, 0.20),
+    ("Plastic Yellow", 0.34, 0.20),
+    ("Plastic Orange", 0.34, 0.20),
+    ("Plastic Green", 0.34, 0.20),
+    ("Plastic Violet", 0.34, 0.20),
+    ("Keyboard Keys", 0.42, 0.14),
+):
+    _v141_pbr(_name, metallic=0.0, rough=_rough, coat=_coat, coat_rough=0.12)
+
+# --- VIDRIO ---
+_v141_pbr("Glass", metallic=0.0, rough=0.018, transmission=1.0,
+          ior=1.45, coat=0.10, coat_rough=0.035)
+
+# --- PINTURA / PANELES ---
+_v141_pbr("Wall Panel Side", metallic=0.0, rough=0.32, coat=0.28, coat_rough=0.10)
+_v141_pbr("Wall Panel Back", metallic=0.0, rough=0.32, coat=0.28, coat_rough=0.10)
+_v141_pbr("Ceiling Panel", metallic=0.0, rough=0.38, coat=0.20, coat_rough=0.12)
+_v141_pbr("Floor", metallic=0.0, rough=0.16, coat=0.24, coat_rough=0.10)
+_v141_pbr("Floor Tile", metallic=0.28, rough=0.20, coat=0.22, coat_rough=0.10)
+
+# --- CAUCHO ---
+_v141_pbr("Rubber", metallic=0.0, rough=0.78, coat=0.03, coat_rough=0.18)
+_v141_pbr("Dust", metallic=0.0, rough=0.92)
+
+# --- SUPERFICIES DE PC ---
+_v141_pbr("HP Black Plastic", base=(0.010, 0.012, 0.016),
+          metallic=0.0, rough=0.34, coat=0.28, coat_rough=0.11)
+_v141_pbr("PCB", base=(0.006, 0.055, 0.018),
+          metallic=0.0, rough=0.31)
+_v141_pbr("Paste New", metallic=0.0, rough=0.30, coat=0.06)
+_v141_pbr("Paste Dry", metallic=0.0, rough=0.88)
+
+# --- ILUMINACION CINEMATOGRAFICA ---
+# Se mantienen las posiciones V14. Solo calibramos potencia/color/tamano.
+def _v141_light(name, energy=None, size=None, color=None):
+    o = bpy.data.objects.get(name)
+    if not o or o.type != "LIGHT":
+        return
+    if energy is not None:
+        o.data.energy = energy * LIGHT_SCALE
+    if size is not None and o.data.type == "AREA":
+        o.data.size = size
+    if color is not None:
+        o.data.color = color
+    try:
+        o.data.use_shadow = True
+    except Exception:
+        pass
+
+# Luz principal
+_v141_light("KEY_LIGHT", 1250, 6.5, (1.0, 0.97, 0.92))
+
+# Luz de relleno
+_v141_light("FILL_LIGHT", 360, 7.0, (0.62, 0.74, 1.0))
+
+# Contraluz
+_v141_light("BACK_LIGHT", 650, 5.0, (0.35, 0.58, 1.0))
+
+# Hero PC
+_v141_light("HERO_KEY", 1450, 3.8, (1.0, 0.98, 0.94))
+_v141_light("HERO_TOP", 800, 3.0, (1.0, 0.97, 0.91))
+_v141_light("HERO_RIM", 520, 4.0, (0.32, 0.55, 1.0))
+
+# Acentos discretos para reflejos, no para lavar la escena
+_v141_light("ACCENT_AMBER", 140, 4.0, (1.0, 0.48, 0.18))
+_v141_light("ACCENT_VIOLET", 100, 4.0, (0.58, 0.30, 1.0))
+_v141_light("ACCENT_TEAL", 120, 4.0, (0.12, 0.72, 0.78))
+
+# Iluminacion de techo
+for _o in scene.objects:
+    if _o.type == "LIGHT" and _o.name.startswith("CEILING_PRACTICAL"):
+        _o.data.energy = 170 * LIGHT_SCALE
+        _o.data.color = (0.88, 0.94, 1.0)
+        if _o.data.type == "AREA":
+            _o.data.shape = "DISK"
+            _o.data.size = 3.2
+        try:
+            _o.data.use_shadow = True
+        except Exception:
+            pass
+
+# Luces de servidores: visibles, pero muy contenidas
+for _o in scene.objects:
+    if _o.type == "LIGHT" and _o.name.startswith("SERVER_PRACTICAL"):
+        _o.data.energy = 30 * LIGHT_SCALE
+        _o.data.color = (0.12, 0.35, 1.0)
+
+# Reflejos controlados: softboxes ya existentes de V14
+_v141_light("V14_SOFTBOX", 700, 5.8, (1.0, 0.98, 0.95))
+_v141_light("V14_RIM_SOFT", 420, 4.5, (0.42, 0.62, 1.0))
+
+# Mundo oscuro pero con suficiente nivel para conservar información en sombras.
+try:
+    bg = scene.world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Color"].default_value = (0.006, 0.010, 0.018, 1.0)
+        bg.inputs["Strength"].default_value = 0.22
+except Exception:
+    pass
+
+# AgX: conservar detalle en altas luces y reflejos.
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.exposure = -0.25
+except Exception:
+    pass
+
+print("=" * 70)
+print("V14.1 — PBR + CINEMATIC LIGHTING")
+print("Base geometrica: V14 CLEAN")
+print("Geometria creada: NO")
+print("Geometria movida: NO")
+print("Materiales: metal / plastico / vidrio / pintura / caucho / PC")
+print("Luz: key / fill / back / techo / reflejos controlados")
+print("=" * 70)
+
+# ============================================================
+# FIN V14.1
+# ============================================================
