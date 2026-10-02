@@ -2978,3 +2978,81 @@ print("=" * 70)
 # ============================================================
 # FIN V14.1
 # ============================================================
+
+
+# ============================================================
+# V14.2 — PBR CORRECTION / MICRODETAIL CONTROL
+# No geometry changes. V14 geometry remains untouched.
+# The V14 microfinish node previously drove Roughness directly;
+# disconnect it here so the explicit V14.1 PBR roughness values
+# actually control the Principled BSDF.
+# ============================================================
+
+def _v142_restore_pbr_roughness(mat):
+    if not mat or not getattr(mat, "use_nodes", False):
+        return
+    nt = mat.node_tree
+    bs = nt.nodes.get("Principled BSDF")
+    if not bs:
+        return
+
+    # Preserve the V14 micro-normal/bump, but stop the generic
+    # roughness ramp from overriding the physically chosen value.
+    for link in list(bs.inputs["Roughness"].links):
+        if link.from_node and link.from_node.name == "V14_ROUGHNESS_VARIATION":
+            nt.links.remove(link)
+
+for _m in list(bpy.data.materials):
+    _v142_restore_pbr_roughness(_m)
+
+# Re-assert the key V14.1 material values after removing the override.
+# This is intentionally limited to existing materials.
+_v141_pbr("Steel", metallic=1.0, rough=0.26, coat=0.12, coat_rough=0.08)
+_v141_pbr("Aluminum", metallic=1.0, rough=0.23, coat=0.10, coat_rough=0.08)
+_v141_pbr("Copper", metallic=1.0, rough=0.25)
+_v141_pbr("Gold", metallic=1.0, rough=0.20)
+_v141_pbr("Perforated Metal", metallic=1.0, rough=0.30)
+_v141_pbr("Anodized Black", metallic=0.88, rough=0.28, coat=0.16, coat_rough=0.08)
+
+_v141_pbr("HP Black Plastic", metallic=0.0, rough=0.34, coat=0.26, coat_rough=0.08)
+_v141_pbr("Plastic Black", metallic=0.0, rough=0.38, coat=0.22, coat_rough=0.10)
+_v141_pbr("Plastic White", metallic=0.0, rough=0.32, coat=0.22, coat_rough=0.10)
+_v141_pbr("Keyboard Keys", metallic=0.0, rough=0.42, coat=0.14, coat_rough=0.12)
+
+_v141_pbr("Glass", metallic=0.0, rough=0.018, coat=0.10,
+          coat_rough=0.035, transmission=1.0, ior=1.45)
+
+_v141_pbr("Wall Panel Side", rough=0.32, coat=0.28, coat_rough=0.14)
+_v141_pbr("Wall Panel Back", rough=0.32, coat=0.28, coat_rough=0.14)
+_v141_pbr("Ceiling Panel", rough=0.38, coat=0.20, coat_rough=0.16)
+_v141_pbr("Floor", rough=0.16, coat=0.24, coat_rough=0.10)
+_v141_pbr("Floor Tile", metallic=0.28, rough=0.20, coat=0.22, coat_rough=0.09)
+
+_v141_pbr("Rubber", metallic=0.0, rough=0.78, coat=0.03, coat_rough=0.20)
+_v141_pbr("Dust", metallic=0.0, rough=0.92)
+_v141_pbr("PCB", metallic=0.0, rough=0.31)
+_v141_pbr("Paste New", metallic=0.0, rough=0.30, coat=0.06, coat_rough=0.12)
+_v141_pbr("Paste Dry", metallic=0.0, rough=0.88)
+
+# Subtle photographic highlight response on the hero PC only.
+# No new objects, no transforms.
+for _name in ("HP Black Plastic", "Plastic Black", "Keyboard Keys"):
+    _m = bpy.data.materials.get(_name)
+    if _m and _m.use_nodes:
+        _bs = _m.node_tree.nodes.get("Principled BSDF")
+        if _bs:
+            try:
+                if "Coat Weight" in _bs.inputs:
+                    _bs.inputs["Coat Weight"].default_value = min(
+                        0.30, float(_bs.inputs["Coat Weight"].default_value)
+                    )
+            except Exception:
+                pass
+
+print("=" * 70)
+print("V14.2 — PBR CORRECTION")
+print("Geometry: unchanged")
+print("V14 micro-normal: preserved")
+print("Generic roughness override: removed")
+print("V14.1 PBR roughness: restored as the active values")
+print("=" * 70)
