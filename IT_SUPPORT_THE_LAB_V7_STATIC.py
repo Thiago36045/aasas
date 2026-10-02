@@ -2140,6 +2140,197 @@ bpy.context.view_layer.update()
 # FIN V12
 # ============================================================
 
+
+# ============================================================
+# V13 — MAX REALISM / COLLISION-SAFE PCB / 4K + RTX 3090
+# - Elimina la decoracion V12 que podia atravesar componentes.
+# - Usa limites exactos de la motherboard original.
+# - Genera trazas/vias/pads SOLO en zonas libres.
+# - Solder mask, copper, ENIG, solder fillets y microtextura.
+# - Render final Cycles + OptiX cuando Blender lo permita.
+# ============================================================
+
+# ---- limpiar la decoracion V12 anterior ----
+for _o in list(bpy.data.objects):
+    if _o.name.startswith("V12_"):
+        bpy.data.objects.remove(_o, do_unlink=True)
+
+# ---- limites REALES de HP_MOTHERBOARD ----
+# El objeto original fue creado con:
+# centro local (-0.975, 0.05, 0.17), half-size (1.325, 1.95, 0.04)
+_MB_X0, _MB_X1 = -2.300, 0.350
+_MB_Y0, _MB_Y1 = -1.900, 2.000
+_MB_TOP = 0.210
+
+# Borde FR-4: termina exactamente en la superficie de la placa.
+box("V13_PCB_EDGE_FRONT",L((_MB_X0+_MB_X1)/2,_MB_Y0,_MB_TOP-0.020),
+    ((_MB_X1-_MB_X0)/2,0.012,0.020),V12_FR4_EDGE,COL_PC,0.002)
+box("V13_PCB_EDGE_BACK",L((_MB_X0+_MB_X1)/2,_MB_Y1,_MB_TOP-0.020),
+    ((_MB_X1-_MB_X0)/2,0.012,0.020),V12_FR4_EDGE,COL_PC,0.002)
+box("V13_PCB_EDGE_LEFT",L(_MB_X0,(_MB_Y0+_MB_Y1)/2,_MB_TOP-0.020),
+    (0.012,(_MB_Y1-_MB_Y0)/2,0.020),V12_FR4_EDGE,COL_PC,0.002)
+box("V13_PCB_EDGE_RIGHT",L(_MB_X1,(_MB_Y0+_MB_Y1)/2,_MB_TOP-0.020),
+    (0.012,(_MB_Y1-_MB_Y0)/2,0.020),V12_FR4_EDGE,COL_PC,0.002)
+
+# ---- zonas de exclusión: ningún detalle de cobre puede invadirlas ----
+# (x0,x1,y0,y1,clearance)
+_keepouts=[
+    (-2.30,-1.98,-1.75,1.75,0.08),  # bancos de capacitores/VRM
+    (-1.48,-0.52,-0.13,0.83,0.10),  # socket + CPU
+    (-0.36,0.39,-0.10,1.00,0.10),   # chipset
+    (-0.40,0.40,-1.85,-0.18,0.10),  # SO-DIMM
+    (-1.95,-1.65,-1.85,-1.25,0.07), # CMOS
+    (-1.98,-1.82,0.92,1.48,0.07),   # BIOS
+    (-0.15,0.30,-1.92,-1.55,0.08),  # IC frontal
+]
+def _v13_blocked(x,y,extra=0.0):
+    for x0,x1,y0,y1,cl in _keepouts:
+        if (x0-cl-extra)<=x<=(x1+cl+extra) and (y0-cl-extra)<=y<=(y1+cl+extra):
+            return True
+    return not (_MB_X0+0.045 <= x <= _MB_X1-0.045 and _MB_Y0+0.045 <= y <= _MB_Y1-0.045)
+
+def _v13_segment_free(a,b,extra=0.0):
+    # Muestreo denso: si un tramo toca una zona ocupada, no se crea.
+    dx=b[0]-a[0]; dy=b[1]-a[1]
+    n=max(2,int(math.hypot(dx,dy)/0.025))
+    for j in range(n+1):
+        t=j/n
+        if _v13_blocked(a[0]+dx*t,a[1]+dy*t,extra):
+            return False
+    return True
+
+# ---- microfabricacion: trazas con vias y terminaciones ----
+V13_TRACE=V12_CU
+V13_PAD=V12_ENIG
+V13_SOLDER=V12_SOLDER
+
+_trace_paths=[
+    [(-2.22,-1.82),(-1.85,-1.82),(-1.62,-1.62),(-1.25,-1.62)],
+    [(-2.20,1.82),(-1.82,1.82),(-1.58,1.58),(-1.25,1.58)],
+    [(-1.58,-1.88),(-1.35,-1.72),(-1.08,-1.72)],
+    [(-0.45,-1.82),(-0.45,-1.48),(-0.70,-1.25)],
+    [(-0.42,1.82),(-0.18,1.60),(-0.18,1.25),(0.28,1.25)],
+    [(-0.48,1.02),(-0.72,1.18),(-0.90,1.35)],
+    [(-1.58,-0.98),(-1.40,-1.12),(-1.18,-1.12)],
+    [(-1.58,0.98),(-1.40,1.10),(-1.22,1.10)],
+]
+for pi,p in enumerate(_trace_paths):
+    for si in range(len(p)-1):
+        a,b=p[si],p[si+1]
+        if not _v13_segment_free(a,b,0.01): continue
+        dx=b[0]-a[0]; dy=b[1]-a[1]
+        ln=math.hypot(dx,dy)
+        ang=math.atan2(dy,dx)
+        box("V13_CU_TRACE_%02d_%02d"%(pi,si),
+            L((a[0]+b[0])/2,(a[1]+b[1])/2,0.216),
+            (ln/2,0.0048,0.0018),V13_TRACE,COL_PC,0.001,rot=(0,0,ang))
+
+# Pads y vias solamente en regiones libres.
+for row in range(6):
+    for col in range(8):
+        x=-1.86+col*0.26+(row%2)*0.035
+        y=-1.70+row*0.42
+        if not _v13_blocked(x,y,0.015):
+            box("V13_ENIG_PAD_%02d_%02d"%(row,col),L(x,y,0.217),
+                (0.030,0.014,0.0022),V13_PAD,COL_PC,0.0015)
+
+for row in range(6):
+    for col in range(7):
+        x=-1.82+col*0.28+(row%2)*0.03
+        y=0.90+row*0.16
+        if not _v13_blocked(x,y,0.015):
+            cyl("V13_VIA_RING_%02d_%02d"%(row,col),L(x,y,0.219),0.016,0.0035,V13_PAD,COL_PC,seg=20)
+            cyl("V13_VIA_HOLE_%02d_%02d"%(row,col),L(x,y,0.223),0.006,0.004,V12_IC,COL_PC,seg=16)
+
+# ---- SMDs libres: cuerpo + terminal + fillet de soldadura ----
+_smd_sites=[(-1.78,-1.42),(-1.52,-1.42),(-1.26,-1.42),(-0.92,-1.72),
+            (-0.66,-1.72),(0.18,1.55),(0.18,1.75),(-1.72,1.42),
+            (-1.45,1.42),(-1.18,1.42)]
+for i,(x,y) in enumerate(_smd_sites):
+    if _v13_blocked(x,y,0.06): continue
+    box("V13_SMD_BODY_%02d"%i,L(x,y,0.247),(0.038,0.015,0.012),V12_IC,COL_PC,0.003)
+    box("V13_SMD_TERM_A_%02d"%i,L(x-0.038,y,0.248),(0.009,0.016,0.008),V13_SOLDER,COL_PC,0.0015)
+    box("V13_SMD_TERM_B_%02d"%i,L(x+0.038,y,0.248),(0.009,0.016,0.008),V13_SOLDER,COL_PC,0.0015)
+    sphere("V13_SOLDER_FILLET_A_%02d"%i,L(x-0.041,y,0.250),0.010,V13_SOLDER,COL_PC,scale=(1.5,1.0,0.55))
+    sphere("V13_SOLDER_FILLET_B_%02d"%i,L(x+0.041,y,0.250),0.010,V13_SOLDER,COL_PC,scale=(1.5,1.0,0.55))
+
+# ---- silkscreen microscópico ----
+for i,(label,x,y) in enumerate([
+    ("HP",-2.18,1.76),("8200",-1.78,1.76),("REV 1.0",-1.18,1.76),
+    ("CPU",-1.38,0.88),("VRM",-1.88,1.72),("RAM",0.03,-1.52),
+    ("SATA",0.02,1.82),("PCH",-0.48,0.38)
+]):
+    if not _v13_blocked(x,y,0.02):
+        text("V13_SILK_%02d"%i,label,L(x,y,0.226),0.038,V12_SILK,COL_PC)
+
+# ---- acabado PCB: microimperfecciones de fabricacion, no suciedad ----
+# Una película ultrafina evita el aspecto CGI perfectamente uniforme.
+V13_PCB_REAL=_v12_mat("V13 FR4 Photoreal",(0.0025,0.040,0.007),0.05,0.31,900,0.045)
+if mb and mb.type=="MESH":
+    mb.data.materials.clear()
+    mb.data.materials.append(V13_PCB_REAL)
+
+# ---- Render de máxima calidad ----
+final=True
+try:
+    scene.render.engine="BLENDER_EEVEE_NEXT"
+except Exception:
+    pass
+
+# RTX 3090: Cycles + OptiX para el render FINAL.
+try:
+    import bpy
+    prefs=bpy.context.preferences
+    cprefs=prefs.addons["cycles"].preferences
+    cprefs.compute_device_type="OPTIX"
+    for dev in cprefs.devices:
+        dev.use=True
+    scene.cycles.device="GPU"
+    scene.render.engine="CYCLES"
+    scene.cycles.samples=512
+    scene.cycles.use_denoising=True
+    try: scene.cycles.preview_samples=64
+    except Exception: pass
+    try: scene.cycles.max_bounces=10
+    except Exception: pass
+    try: scene.cycles.diffuse_bounces=4
+    except Exception: pass
+    try: scene.cycles.glossy_bounces=6
+    except Exception: pass
+    try: scene.cycles.transmission_bounces=8
+    except Exception: pass
+    try: scene.cycles.transparent_max_bounces=8
+    except Exception: pass
+except Exception as e:
+    print("OptiX/Cycles no disponible; se conserva EEVEE NEXT:",e)
+
+# Sombras/reflejos: alta resolución, transparencias y contacto.
+try:
+    scene.render.resolution_x=3840
+    scene.render.resolution_y=2160
+    scene.render.resolution_percentage=100
+    scene.render.image_settings.file_format="PNG"
+    scene.render.film_transparent=False
+except Exception:
+    pass
+
+try:
+    # DOF sutil para la cámara hero, manteniendo el laboratorio legible.
+    cam=bpy.data.objects.get("CAMERA_HERO_PC")
+    if cam:
+        cam.data.dof.use_dof=True
+        cam.data.dof.focus_object=bpy.data.objects.get("HP_MOTHERBOARD") or bpy.data.objects.get("HP_CPU")
+        cam.data.dof.aperture_fstop=7.1
+except Exception:
+    pass
+
+bpy.context.view_layer.update()
+
+# ============================================================
+# FIN V13
+# ============================================================
+
+
 # ============================================================
 # 10. LUCES (calibradas para NO quemar la imagen)
 # ============================================================
