@@ -3296,3 +3296,209 @@ except Exception as e:
     print("No se pudo guardar copia:", e)
 
 print("LISTO. V7 STATIC: cambia el viewport a Rendered y usa CAMERA_MASTER / CAMERA_WIDE.")
+
+
+# ============================================================
+# V23-V30 — CINEMATIC MASTER / PHYSICAL REALISM / TRAILER
+# ============================================================
+def _m(name, fallback="MAT_BLACK"):
+    return bpy.data.materials.get(name) or bpy.data.materials.get(fallback) or bpy.data.materials.new(name)
+
+V23_METAL = _m("V15_METAL_BRUSH","MAT_STEEL")
+V23_DARK = _m("V15_METAL_DARK","MAT_BLACK")
+V23_PL = _m("V15_PLASTIC","MAT_PL_BLACK")
+V23_RUB = _m("V15_RUBBER","MAT_RUBBER")
+V23_CU = bpy.data.materials.get("V16 Exposed Copper") or _m("MAT_COPPER")
+V23_GOLD = bpy.data.materials.get("V16 ENIG Contacts") or _m("MAT_GOLD")
+V23_SOLDER = bpy.data.materials.get("V16 Bright Solder") or _m("MAT_COPPER")
+V23_SCREEN = bpy.data.materials.get("V20 Instrument Screen") or _m("MAT_SCREEN")
+V23_WHITE = _m("MAT_WHITE")
+V23_CYAN = _m("MAT_CYAN")
+
+# ---------------- V23: physical realism pass ----------------
+# Contact pads / feet under the most important objects.
+for nm in ("HP_PC_FLOOR","HP_PC_BASE","HP_PC_CASE","V20_BENCH"):
+    ob=bpy.data.objects.get(nm)
+    if ob and ob.type=="MESH":
+        try:
+            bev=ob.modifiers.get("V23_EDGE_BEVEL") or ob.modifiers.new("V23_EDGE_BEVEL","BEVEL")
+            bev.width=min(max(min(ob.dimensions)*0.012,0.003),0.025); bev.segments=3
+        except Exception: pass
+
+# Expansion joints and structural fasteners.
+for y in (-8.5,-4.25,0,4.25,8.5):
+    box("V23_FLOOR_JOINT",(0,y,0.018),(14.0,.012,.004),V23_RUB,COL_ARCH)
+for x in (-14.0,14.0):
+    for y in (-7,-3.5,0,3.5,7):
+        cyl("V23_WALL_RIVET",(x,y,1.8),.025,.008,V23_METAL,COL_ARCH,rot=(0,R90,0),seg=12)
+for x in (-12,-6,0,6,12):
+    for y in (9.85,10.05):
+        cyl("V23_PANEL_FASTENER",(x,y,5.2),.035,.012,V23_METAL,COL_ARCH,rot=(R90,0,0),seg=16)
+
+# Subtle paint wear: tiny neutral decals/marks rather than fake dirt.
+for x,y in [(-12.1,2.8),(12.05,-1.7),(-8.7,9.95),(8.5,9.95)]:
+    box("V23_PAINT_VARIATION",(x,y,2.1),(.16,.006,.002),_m("MAT_DUST"),COL_ARCH)
+
+# ---------------- V24: product-level HP micro hardware ----------------
+mb=bpy.data.objects.get("HP_MOTHERBOARD")
+if mb:
+    mx,my,mz=mb.location
+    # Dense, collision-light SMD field around the PCB perimeter.
+    for i in range(72):
+        col=i%12; row=i//12
+        x=mx-1.0+col*.17
+        y=my-1.55+row*.24
+        z=mz+0.058
+        if abs(x-mx)>0.22 or abs(y-my)>0.22:
+            box("V24_SMD",(x,y,z),(.028,.016,.010),V23_DARK,COL_PC,.003)
+            box("V24_SMD_PAD",(x-.022,y,z-.004),(.008,.012,.004),V23_SOLDER,COL_PC,.002)
+            box("V24_SMD_PAD",(x+.022,y,z-.004),(.008,.012,.004),V23_SOLDER,COL_PC,.002)
+    # Micro vias and fine traces.
+    for i in range(48):
+        col=i%12; row=i//12
+        x=mx-1.0+col*.17; y=my-1.35+row*.34
+        cyl("V24_VIA",(x,y,mz+.066),.006,.006,V23_GOLD,COL_PC,seg=8)
+    for i,w in enumerate((.0025,.004,.006,.009)):
+        for j in range(5):
+            x=mx-1.85+j*.72; y=my+1.25-i*.16
+            cable("V24_FINE_TRACE",[(x,y,mz+.068),(x+.48,y+.035,mz+.068),(x+.70,y+.02,mz+.068)],w,V23_CU,COL_PC)
+    # Laser-marked manufacturing labels.
+    for i,t in enumerate(("REV 1.0","FR4","615114-001","MADE IN TAIWAN")):
+        text("V24_MARK",t,(mx-1.1+i*.58,my+1.72,mz+.075),.027,_m("V16 Laser Marking","MAT_WHITE"),COL_PC)
+
+# Extra connector housings and retention clips.
+for i in range(4):
+    x=-1.45+i*.45
+    box("V24_HEADER",(x,1.78,.46),(.10,.08,.08),V23_PL,COL_PC,.008)
+    for p in range(6):
+        cyl("V24_HEADER_PIN",(x-.045+p*.018,1.84,.48),.006,.055,V23_GOLD,COL_PC,seg=8)
+
+# ---------------- V25: believable cable physics ----------------
+def _v25_bundle(name,pts,r,mat,col):
+    cable(name,pts,r,mat,col)
+
+# Bundled server cabling with progressively tighter bends at rack entry.
+for rack,x in enumerate((-10.8,-3.6,3.6,10.8),1):
+    for j in range(5):
+        yy=6.45+j*.14
+        _v25_bundle("V25_CAT6",[(x-.95,7.02,4.9+j*.28),(x-.55,6.72,4.75+j*.24),(x-.18,6.48,4.55+j*.20),(x,6.15,4.25+j*.18)],.013+j*.001,V18_CABLE,COL_SERVER)
+        box("V25_VELCRO",(x-.72,6.72,4.7+j*.24),(.045,.12,.018),V23_PL,COL_SERVER,.006)
+    for j in range(3):
+        _v25_bundle("V25_POWER",[(x+.75,7.02,1.0+j*.22),(x+.52,6.78,1.15+j*.18),(x+.20,6.42,1.35+j*.14),(x,6.05,1.55+j*.12)],.025,V18_POWER,COL_SERVER)
+    for j in range(3):
+        text("V25_CABLE_TAG","R%d-%s"%(rack,("NET","PWR","FBR")[j]),(x-.2,6.08,4.15-j*.18),.025,V23_WHITE,COL_SERVER,rot=(R90,0,0))
+
+# RJ45 connector plugs with latch silhouette.
+for i in range(12):
+    x=-11.7+(i%6)*.45; y=7.02; z=3.0+(i//6)*.34
+    box("V25_RJ45",(x,y,z),(.12,.07,.07),V23_PL,COL_SERVER,.008)
+    box("V25_RJ45_LATCH",(x,y-.04,z+.055),(.045,.025,.012),V23_PL,COL_SERVER,.004)
+    for p in range(8): box("V25_RJ45_PIN",(x-.042+p*.012,y-.075,z-.028),(.004,.006,.018),V23_GOLD,COL_SERVER)
+
+# ---------------- V26: trailer language / timeline markers ----------------
+for fr,label in [(1,"SHOT 01 — BLACK / THE LAB"),(36,"SHOT 02 — MASTER"),(72,"SHOT 03 — WIDE"),(108,"SHOT 04 — HERO PC"),(144,"SHOT 05 — MACRO CPU"),(180,"SHOT 06 — MACRO RAM"),(216,"SHOT 07 — VRM"),(252,"SHOT 08 — SERVERS"),(288,"SHOT 09 — ESD BENCH"),(324,"SHOT 10 — COMMAND CENTER"),(360,"SHOT 11 — LOW ANGLE"),(396,"SHOT 12 — MASTER / TITLE")]:
+    try: scene.timeline_markers.new(label,frame=fr)
+    except Exception: pass
+scene.render.fps=24
+scene.frame_start=1; scene.frame_end=420
+
+# A simple cinematic camera sequence: static shots with cuts, no object animation.
+shot_map=[
+(1,35,"V22_MASTER"),(36,71,"V22_MASTER"),(72,107,"V22_WIDE"),
+(108,143,"V22_HERO_PC"),(144,179,"V22_MACRO_CPU"),(180,215,"V22_MACRO_RAM"),
+(216,251,"V22_MACRO_VRM"),(252,287,"V22_SERVER"),(288,323,"V22_ESD"),
+(324,359,"V22_COMMAND"),(360,395,"V22_LOW_ANGLE"),(396,420,"V22_MASTER")]
+for a,b,camname in shot_map:
+    cam=bpy.data.objects.get(camname)
+    if cam:
+        cam.hide_render=False
+        cam.hide_viewport=False
+        cam.keyframe_insert(data_path="hide_render",frame=a)
+        cam.hide_render=True
+        cam.keyframe_insert(data_path="hide_render",frame=a+0.01)
+        cam.hide_render=False
+        cam.keyframe_insert(data_path="hide_render",frame=b)
+# Active camera remains master.
+scene.camera=bpy.data.objects.get("V22_MASTER") or scene.camera
+
+# ---------------- V27: cinema camera refinement ----------------
+for nm,lens,fstop in [
+    ("V22_MASTER",32,9),("V22_WIDE",24,10),("V22_HERO_PC",55,4.8),
+    ("V22_MACRO_CPU",100,2.4),("V22_MACRO_RAM",105,2.8),("V22_MACRO_VRM",95,2.8),
+    ("V22_SERVER",50,5.6),("V22_ESD",45,5.0),("V22_COMMAND",50,6.3),("V22_LOW_ANGLE",30,8)]:
+    cam=bpy.data.objects.get(nm)
+    if cam and cam.type=="CAMERA":
+        cam.data.lens=lens; cam.data.dof.aperture_fstop=fstop
+        try: cam.data.dof.aperture_blades=8
+        except Exception: pass
+
+# ---------------- V28: restrained atmosphere / optical response ----------------
+try:
+    world=scene.world
+    if world and world.use_nodes:
+        out=world.node_tree.nodes.get("World Output")
+        vol=world.node_tree.nodes.get("V19_VOLUME")
+        if vol:
+            vol.inputs["Density"].default_value=.0022
+            vol.inputs["Anisotropy"].default_value=.02
+except Exception: pass
+
+# Sparse floating dust only in ceiling light paths.
+for i in range(36):
+    x=-12+(i%9)*3.0; y=-6+(i//9)*3.0; z=6.7+(i%3)*.25
+    sphere("V28_DUST_PARTICLE",(x,y,z),.0035,_m("MAT_DUST"),COL_ARCH)
+
+# Compositor: subtle glare, no videogame bloom.
+try:
+    nt=scene.node_tree
+    if nt:
+        glare=nt.nodes.get("V28_SUBTLE_GLARE") or nt.nodes.new("CompositorNodeGlare")
+        glare.name="V28_SUBTLE_GLARE"; glare.glare_type="FOG_GLOW"; glare.quality="HIGH"; glare.threshold=4.5; glare.size=6
+except Exception: pass
+
+# ---------------- V29: living lab dashboards ----------------
+dash_lines=[
+"RACK-01   ONLINE   21.2 C   CPU 31%   RAM 64%",
+"RACK-02   ONLINE   21.5 C   CPU 28%   RAM 58%",
+"RACK-03   ONLINE   21.1 C   CPU 34%   RAM 71%",
+"RACK-04   ONLINE   21.7 C   CPU 29%   RAM 62%",
+"NETWORK   1GbE / 10GbE   STABLE",
+"STORAGE   87% USED   HEALTH 98%",
+"BACKUP    LAST RUN 02:14   ACTIVE",
+"SECURITY  CAMERAS 04   THREATS 00",
+]
+for i,line in enumerate(dash_lines):
+    text("V29_STATUS",line,(-2.95,10.18,4.95-i*.20),.055,V23_CYAN,COL_STAGE,rot=(R90,0,0),align="LEFT")
+# Tiny indicator lamps.
+for i in range(16):
+    cyl("V29_INDICATOR",(-3.0+i*.4,10.12,3.15),.018,.018,_m(("MAT_GREEN","MAT_CYAN","MAT_AMBER","MAT_RED")[i%4],"MAT_CYAN"),COL_STAGE,rot=(R90,0,0),seg=12)
+
+# ---------------- V30: final master render configuration ----------------
+try:
+    scene.render.engine="CYCLES"
+    scene.cycles.samples=1280
+    scene.cycles.use_denoising=True
+    scene.cycles.use_adaptive_sampling=True
+    scene.cycles.max_bounces=16
+    scene.cycles.diffuse_bounces=6
+    scene.cycles.glossy_bounces=8
+    scene.cycles.transmission_bounces=10
+    scene.cycles.transparent_max_bounces=10
+    scene.cycles.device="GPU"
+    cp=bpy.context.preferences.addons["cycles"].preferences
+    cp.compute_device_type="OPTIX"
+    for d in cp.devices: d.use=True
+except Exception as e: print("V30 OptiX:",e)
+scene.render.resolution_x=3840
+scene.render.resolution_y=2160
+scene.render.resolution_percentage=100
+scene.render.image_settings.file_format="PNG"
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.look="AgX - Medium High Contrast"
+    scene.view_settings.exposure=-.18
+except Exception: pass
+bpy.context.view_layer.update()
+# ============================================================
+# FIN V23-V30
+# ============================================================
