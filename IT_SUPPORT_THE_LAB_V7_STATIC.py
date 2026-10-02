@@ -3415,3 +3415,138 @@ print("Hero: HP plastic / metal / PCB / cooling / cables / glass")
 print("Environment: subtle roughness / integration / controlled DOF")
 print("Lighting: restrained blue HP rim")
 print("="*70)
+
+
+# ============================================================
+# V14.6 — REFLECTIONS + CINEMATIC COLOR BALANCE
+# No camera changes. No geometry. No new mesh objects.
+# ============================================================
+
+def _v146_light(name, energy=None, color=None, size=None):
+    o=bpy.data.objects.get(name)
+    if not o or o.type!="LIGHT":
+        return
+    if energy is not None: o.data.energy=energy*LIGHT_SCALE
+    if color is not None: o.data.color=color
+    if size is not None and o.data.type=="AREA": o.data.size=size
+    try: o.data.use_shadow=True
+    except Exception: pass
+
+# ------------------------------------------------------------
+# REALISTIC REFLECTION SOURCES
+# The goal is for existing lights to appear as physical highlights
+# on metal/plastic rather than tinting the entire room.
+# ------------------------------------------------------------
+
+# Warm-neutral key: broad white highlight on HP and metal.
+_v146_light("KEY_LIGHT",980,(1.0,0.975,0.94),7.5)
+
+# Softbox: broad reflection card for chassis and server metal.
+_v146_light("V14_SOFTBOX",560,(1.0,0.99,0.97),7.0)
+
+# Ceiling practicals: coherent cool-white architectural highlights.
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("CEILING_PRACTICAL"):
+        _o.data.energy=135*LIGHT_SCALE
+        _o.data.color=(0.90,0.95,1.0)
+        if _o.data.type=="AREA":
+            _o.data.size=3.6
+
+# ------------------------------------------------------------
+# CONTROLLED BLUE RIM
+# Blue exists mainly as an edge reflection/separation light.
+# ------------------------------------------------------------
+_v146_light("HERO_RIM",330,(0.22,0.40,1.0),3.8)
+_v146_light("V14_RIM_SOFT",260,(0.34,0.53,1.0),5.5)
+
+# BACK light is reduced so the environment stays cool rather than cyan.
+_v146_light("BACK_LIGHT",300,(0.40,0.54,0.82),6.5)
+
+# ------------------------------------------------------------
+# VERY SOFT FILL
+# Enough to reveal black surfaces without flattening them.
+# ------------------------------------------------------------
+_v146_light("FILL_LIGHT",155,(0.74,0.80,0.90),8.5)
+
+# ------------------------------------------------------------
+# SERVER / ACCENT LIGHTS
+# Small colored points only. They should not become room lighting.
+# ------------------------------------------------------------
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("SERVER_PRACTICAL"):
+        _o.data.energy=9*LIGHT_SCALE
+        _o.data.color=(0.20,0.38,1.0)
+
+_v146_light("ACCENT_AMBER",70,(1.0,0.48,0.16),4.0)
+_v146_light("ACCENT_VIOLET",42,(0.60,0.34,1.0),4.0)
+_v146_light("ACCENT_TEAL",48,(0.18,0.68,0.74),4.0)
+
+# ------------------------------------------------------------
+# MATERIAL REFLECTION CALIBRATION
+# Keep metal reflective and plastics dark/neutral.
+# ------------------------------------------------------------
+def _v146_mat(name, metallic=None, rough=None, coat=None, coat_rough=None):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes: return
+    bs=m.node_tree.nodes.get("Principled BSDF")
+    if not bs: return
+    if metallic is not None and "Metallic" in bs.inputs and not bs.inputs["Metallic"].is_linked:
+        bs.inputs["Metallic"].default_value=metallic
+    if rough is not None and "Roughness" in bs.inputs and not bs.inputs["Roughness"].is_linked:
+        bs.inputs["Roughness"].default_value=rough
+    for n in ("Coat Weight","Coat"):
+        if coat is not None and n in bs.inputs and not bs.inputs[n].is_linked:
+            bs.inputs[n].default_value=coat
+    if coat_rough is not None and "Coat Roughness" in bs.inputs and not bs.inputs["Coat Roughness"].is_linked:
+        bs.inputs["Coat Roughness"].default_value=coat_rough
+
+# HP: deep black, but not dead black.
+_v146_mat("HP Black Plastic",0.0,0.30,0.30,0.075)
+
+# Chassis metals: bright, neutral highlights.
+_v146_mat("Steel",1.0,0.22,0.10,0.07)
+_v146_mat("Aluminum",1.0,0.19,0.08,0.06)
+_v146_mat("Perforated Metal",1.0,0.27,0.07,0.08)
+_v146_mat("Anodized Black",0.88,0.27,0.14,0.08)
+
+# Server/plastic surfaces: controlled reflections, not glossy toy plastic.
+_v146_mat("Plastic Black",0.0,0.36,0.20,0.10)
+_v146_mat("Plastic White",0.0,0.31,0.20,0.10)
+_v146_mat("Keyboard Keys",0.0,0.40,0.12,0.11)
+
+# PCB remains mostly diffuse with restrained sheen.
+_v146_mat("PCB",0.0,0.28,0.05,0.12)
+
+# ------------------------------------------------------------
+# COLOR MANAGEMENT
+# Warm key + cool environment + blue rim.
+# Deep blacks without crushing the HP details.
+# ------------------------------------------------------------
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.look="AgX - Medium High Contrast"
+    scene.view_settings.exposure=-0.08
+    scene.view_settings.gamma=1.0
+except Exception:
+    try:
+        scene.view_settings.view_transform="AgX"
+        scene.view_settings.exposure=-0.08
+    except Exception:
+        pass
+
+try:
+    bg=scene.world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Color"].default_value=(0.006,0.009,0.015,1.0)
+        bg.inputs["Strength"].default_value=0.12
+except Exception:
+    pass
+
+# Preserve all existing cameras exactly as they are.
+print("="*70)
+print("V14.6 — REFLECTIONS + CINEMATIC COLOR BALANCE")
+print("Camera changes: NO")
+print("Geometry changes: NO")
+print("Reflection sources: key / softbox / ceiling / blue rim")
+print("Palette: deep black + neutral metal + cool lab + warm key + blue rim")
+print("="*70)
