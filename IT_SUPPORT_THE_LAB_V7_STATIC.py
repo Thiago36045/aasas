@@ -4210,3 +4210,205 @@ print("Objects transformed: NO")
 print("Cameras changed: NO")
 print("All realism added through existing materials, shaders and lights.")
 print("="*70)
+
+
+# ============================================================
+# V17 — HP COMPAQ 8200 ELITE ULTRA-SLIM / USDT — FIDELIDAD
+# Reemplaza SOLO el hero PC. Laboratorio, luces y cámaras intactos.
+# Referencia dimensional: 251 x 254 x 66 mm.
+# Arquitectura: SODIMM, 2.5" SATA bajo ODD, front/rear fan,
+# heatsink separado, PSU externa.
+# ============================================================
+
+def _v17_unlink_all(o):
+    for c in list(o.users_collection):
+        c.objects.unlink(o)
+
+def _v17_mat(name, color, metallic=0.0, rough=0.4):
+    m = bpy.data.materials.get(name)
+    if m is None:
+        m = bpy.data.materials.new(name)
+        m.diffuse_color = (*color, 1.0)
+        m.use_nodes = True
+        bs = m.node_tree.nodes.get("Principled BSDF")
+        if bs:
+            bs.inputs["Base Color"].default_value = (*color, 1.0)
+            bs.inputs["Metallic"].default_value = metallic
+            bs.inputs["Roughness"].default_value = rough
+    return m
+
+V17_BLACK = bpy.data.materials.get("HP Black Plastic") or _v17_mat("V17_HP_BLACK",(0.018,0.020,0.024),0.12,0.34)
+V17_DARK = _v17_mat("V17_DARK_METAL",(0.055,0.065,0.075),0.82,0.28)
+V17_SHEET = _v17_mat("V17_SHEET_METAL",(0.10,0.115,0.13),0.88,0.30)
+V17_PCB = bpy.data.materials.get("PCB") or _v17_mat("V17_PCB",(0.008,0.09,0.025),0.10,0.36)
+V17_ALU = bpy.data.materials.get("Aluminum") or _v17_mat("V17_ALUMINUM",(0.48,0.52,0.56),0.95,0.24)
+V17_CU = bpy.data.materials.get("Copper") or _v17_mat("V17_COPPER",(0.45,0.12,0.035),0.95,0.25)
+V17_GOLD = bpy.data.materials.get("Gold") or _v17_mat("V17_GOLD",(0.65,0.38,0.045),0.98,0.20)
+V17_RUBBER = bpy.data.materials.get("Rubber") or _v17_mat("V17_RUBBER",(0.006,0.008,0.010),0,0.72)
+V17_GREEN = bpy.data.materials.get("LED Green") or _v17_mat("V17_GREEN",(0.02,0.65,0.08),0,0.25)
+V17_BLUE = bpy.data.materials.get("LED Blue") or _v17_mat("V17_BLUE",(0.02,0.15,0.9),0,0.24)
+V17_WHITE = bpy.data.materials.get("Label White") or _v17_mat("V17_WHITE",(0.72,0.74,0.72),0,0.40)
+
+# Preserve the pedestal, remove the previous inaccurate computer and its labels.
+for o in list(COL_PC.objects):
+    if not o.name.startswith("PEDESTAL"):
+        bpy.data.objects.remove(o, do_unlink=True)
+
+V17_O = (0.0, 7.2, 1.42)
+V17_W, V17_D, V17_H = 5.02, 5.08, 1.32
+V17_X, V17_Y, V17_Z = V17_W/2, V17_D/2, V17_H
+def V17L(x,y,z):
+    return (V17_O[0]+x, V17_O[1]+y, V17_O[2]+z)
+
+# --- thin stamped chassis: exact USDT proportions ---
+box("V17_CHASSIS_BOTTOM", V17L(0,0,0.035), (V17_X-0.05,V17_Y-0.05,0.035), V17_SHEET, COL_PC, 0.035)
+box("V17_LEFT_SIDE", V17L(-V17_X+0.035,0,V17_Z/2), (0.035,V17_Y-0.06,V17_Z/2), V17_BLACK, COL_PC, 0.025)
+box("V17_RIGHT_SIDE", V17L(V17_X-0.035,0,V17_Z/2), (0.035,V17_Y-0.06,V17_Z/2), V17_BLACK, COL_PC, 0.025)
+box("V17_REAR_SHEET", V17L(0,V17_Y-0.035,V17_Z/2), (V17_X-0.06,0.035,V17_Z/2), V17_SHEET, COL_PC, 0.018)
+
+# Front bezel: deep black, softly rounded, with the characteristic low USDT face.
+box("V17_FRONT_BEZEL", V17L(0,-V17_Y+0.035,V17_Z/2), (V17_X-0.055,0.055,V17_Z/2), V17_BLACK, COL_PC, 0.075)
+box("V17_FRONT_INNER", V17L(0,-V17_Y+0.092,V17_Z/2), (V17_X-0.13,0.018,V17_Z/2-0.08), V17_DARK, COL_PC, 0.025)
+
+# Front optical bay — slim 12.7 mm class drive, right side.
+box("V17_ODD_FRONT", V17L(1.18,-V17_Y-0.025,0.80), (1.22,0.018,0.235), V17_SHEET, COL_PC, 0.012)
+box("V17_ODD_SLOT", V17L(1.20,-V17_Y-0.050,0.79), (0.92,0.010,0.018), V17_RUBBER, COL_PC, 0.003)
+box("V17_ODD_EJECT", V17L(2.10,-V17_Y-0.052,0.67), (0.075,0.008,0.035), V17_ALU, COL_PC, 0.006)
+box("V17_ODD_LED", V17L(0.56,-V17_Y-0.054,0.67), (0.025,0.008,0.018), V17_GREEN, COL_PC, 0.004)
+
+# Front I/O: four USB 2.0 + dedicated headphone + mic/headphone.
+for i,x in enumerate((-1.82,-1.36,-0.90,-0.44)):
+    box("V17_FRONT_USB", V17L(x,-V17_Y-0.052,0.31), (0.145,0.010,0.070), V17_RUBBER, COL_PC, 0.008)
+    box("V17_FRONT_USB_TONGUE", V17L(x,-V17_Y-0.064,0.31), (0.105,0.006,0.018), V17_ALU, COL_PC, 0.002)
+for x in (-0.05,0.28):
+    cyl("V17_FRONT_AUDIO", V17L(x,-V17_Y-0.060,0.31), 0.052,0.018,V17_RUBBER,COL_PC,rot=(R90,0,0),seg=20)
+
+# Power button on the left, restrained white/green indicator.
+cyl("V17_POWER_BUTTON", V17L(-2.12,-V17_Y-0.055,0.83), 0.115,0.035,V17_BLACK,COL_PC,rot=(R90,0,0),seg=32)
+torus("V17_POWER_RING", V17L(-2.12,-V17_Y-0.075,0.83),0.135,0.010,V17_ALU,COL_PC,rot=(R90,0,0),seg=32)
+box("V17_POWER_LED", V17L(-2.12,-V17_Y-0.078,0.82),(0.018,0.006,0.018),V17_GREEN,COL_PC,0.002)
+
+# HP badge / model print — no futuristic graphics on the physical PC.
+text("V17_HP_MARK", "hp", V17L(-1.28,-V17_Y-0.072,0.82),0.48,V17_WHITE,COL_PC)
+text("V17_MODEL_PRINT", "Compaq 8200 Elite", V17L(-1.23,-V17_Y-0.072,0.57),0.105,V17_WHITE,COL_PC)
+
+# Side ventilation: shallow stamped slots rather than large sci-fi grilles.
+for side in (-1,1):
+    sx=side*(V17_X+0.008)
+    for i in range(12):
+        yy=-1.72+i*0.30
+        box("V17_SIDE_SLOT", V17L(sx,V17L(0,yy,0)[1]-V17_O[1],0.64),(0.010,0.055,0.11),V17_DARK,COL_PC,0)
+
+# Rear I/O plate: 6 USB, PS/2 pair, VGA, DP, RJ45, audio.
+box("V17_REAR_IO_PLATE", V17L(0,V17_Y+0.055,0.70),(2.10,0.010,0.43),V17_BLACK,COL_PC,0.012)
+for i,x in enumerate((-1.78,-1.30,-0.82,-0.34,0.14,0.62)):
+    box("V17_REAR_USB",V17L(x,V17_Y+0.070,0.86),(0.16,0.008,0.075),V17_RUBBER,COL_PC,0.006)
+    box("V17_REAR_USB_TONGUE",V17L(x,V17_Y+0.082,0.86),(0.115,0.005,0.018),V17_ALU,COL_PC,0.002)
+cyl("V17_PS2_KB",V17L(1.25,V17_Y+0.070,0.92),0.105,0.020,V17_RUBBER,COL_PC,rot=(R90,0,0),seg=24)
+cyl("V17_PS2_MOUSE",V17L(1.55,V17_Y+0.070,0.92),0.105,0.020,V17_RUBBER,COL_PC,rot=(R90,0,0),seg=24)
+box("V17_DP",V17L(1.72,V17_Y+0.070,0.50),(0.22,0.008,0.105),V17_RUBBER,COL_PC,0.006)
+box("V17_VGA",V17L(1.15,V17_Y+0.070,0.49),(0.30,0.008,0.20),V17_SHEET,COL_PC,0.008)
+box("V17_RJ45",V17L(0.88,V17_Y+0.070,0.49),(0.25,0.008,0.20),V17_SHEET,COL_PC,0.008)
+for x in (0.43,0.70):
+    cyl("V17_REAR_AUDIO",V17L(x,V17_Y+0.072,0.49),0.055,0.018,V17_RUBBER,COL_PC,rot=(R90,0,0),seg=20)
+
+# External 135 W adapter: outside the chassis, as the real USDT uses.
+box("V17_EXTERNAL_PSU",(3.45,8.25,1.00),(0.58,0.92,0.16),V17_BLACK,COL_PC,0.06)
+text("V17_PSU_LABEL","HP 135W", (3.45,7.30,1.01),0.11,V17_WHITE,COL_PC)
+cable("V17_PSU_CABLE",[(2.20,9.72,1.00),(2.65,9.55,1.00),(3.00,9.05,1.00)],0.045,V17_RUBBER,COL_PC)
+
+# --- internal chassis floor / motherboard ---
+box("V17_INTERNAL_FLOOR",V17L(0,0,0.075),(V17_X-0.22,V17_Y-0.22,0.035),V17_DARK,COL_PC,0.015)
+box("V17_MOTHERBOARD",V17L(-0.45,0.15,0.13),(1.82,2.22,0.045),V17_PCB,COL_PC,0.018)
+
+# Four actual board mounting points.
+for x,y in ((-1.95,-1.75),(1.10,-1.75),(-1.95,1.72),(1.10,1.72)):
+    cyl("V17_MB_TORX",V17L(x,y,0.205),0.045,0.025,V17_GOLD,COL_PC,seg=12)
+
+# SODIMM area — two compact notebook-style slots.
+for x in (-0.10,0.55):
+    box("V17_SODIMM_SLOT",V17L(x,-1.28,0.205),(0.20,0.78,0.035),V17_BLACK,COL_PC,0.008)
+    box("V17_SODIMM",V17L(x,-1.28,0.255),(0.18,0.72,0.015),V17_PCB,COL_PC,0.004)
+    for j in range(6):
+        box("V17_SODIMM_IC",V17L(x,-1.55+j*0.11,0.285),(0.11,0.075,0.018),V17_BLACK,COL_PC,0.003)
+    for y in (-1.70,-0.86):
+        box("V17_SODIMM_CLIP",V17L(x+0.23,y,0.23),(0.025,0.065,0.07),V17_SHEET,COL_PC,0.004)
+
+# CPU socket, Sandy Bridge-era package and thermal compound.
+box("V17_CPU_SOCKET",V17L(-0.72,0.30,0.205),(0.50,0.50,0.035),V17_SHEET,COL_PC,0.012)
+box("V17_CPU",V17L(-0.72,0.30,0.255),(0.34,0.34,0.035),V17_ALU,COL_PC,0.010)
+sphere("V17_THERMAL_PASTE",V17L(-0.72,0.30,0.300),0.12,V17_WHITE,COL_PC,scale=(1,1,0.22))
+
+# Q67 / VRM / passives — dense but restrained, no invented modern components.
+box("V17_CHIPSET",V17L(0.30,0.50,0.215),(0.34,0.34,0.055),V17_DARK,COL_PC,0.012)
+for x in (-1.45,-1.25,-1.05,-0.85):
+    for y in (0.95,1.18,1.41):
+        box("V17_VRM",V17L(x,y,0.23),(0.075,0.075,0.05),V17_BLACK,COL_PC,0.008)
+for i in range(8):
+    cyl("V17_CAP",V17L(0.92,-0.55+i*0.18,0.25),0.045,0.10,V17_BLACK,COL_PC,seg=16)
+    cyl("V17_CAP_TOP",V17L(0.92,-0.55+i*0.18,0.305),0.036,0.008,V17_ALU,COL_PC,seg=16)
+
+# Front fan, correctly on the LEFT side of the USDT chassis.
+V17_FAN=( -1.75,-2.00 )
+cyl("V17_FRONT_FAN",V17L(V17_FAN[0],V17_FAN[1],0.54),0.47,0.16,V17_BLACK,COL_PC,seg=48)
+torus("V17_FRONT_FAN_RING",V17L(V17_FAN[0],V17_FAN[1],0.63),0.43,0.035,V17_DARK,COL_PC,seg=48)
+cyl("V17_FRONT_FAN_HUB",V17L(V17_FAN[0],V17_FAN[1],0.65),0.10,0.035,V17_ALU,COL_PC,seg=24)
+for i in range(7):
+    a=2*math.pi*i/7
+    box("V17_FRONT_BLADE",V17L(V17_FAN[0]+0.25*math.cos(a),V17_FAN[1]+0.25*math.sin(a),0.67),(0.22,0.045,0.018),V17_DARK,COL_PC,0.008,rot=(0,0,a+0.45))
+box("V17_FRONT_FAN_DUCT",V17L(-1.25,-0.75,0.55),(0.22,1.05,0.55),V17_SHEET,COL_PC,0.018)
+
+# Separate rear 60 mm fan, right rear corner; NOT attached to CPU heatsink.
+cyl("V17_REAR_FAN",V17L(1.72,2.12,0.60),0.36,0.10,V17_BLACK,COL_PC,rot=(R90,0,0),seg=48)
+torus("V17_REAR_FAN_RING",V17L(1.72,2.07,0.60),0.33,0.025,V17_DARK,COL_PC,rot=(R90,0,0),seg=48)
+for i in range(7):
+    a=2*math.pi*i/7
+    box("V17_REAR_BLADE",V17L(1.72+0.19*math.cos(a),2.00,0.60+0.19*math.sin(a)),(0.17,0.025,0.04),V17_DARK,COL_PC,0.006,rot=(0,a,0))
+
+# CPU heatsink: four Torx screws, no fan mounted to it.
+box("V17_CPU_HEATSINK",V17L(-0.72,0.30,0.56),(0.72,0.72,0.10),V17_ALU,COL_PC,0.025)
+for i in range(8):
+    x=-1.03+i*0.088
+    box("V17_HEATSINK_FIN",V17L(x,0.30,0.69),(0.022,0.64,0.20),V17_ALU,COL_PC,0.004)
+for x,y in ((-1.02,0.00),(-0.42,0.00),(-1.02,0.60),(-0.42,0.60)):
+    cyl("V17_HEATSINK_TORX",V17L(x,y,0.72),0.045,0.025,V17_GOLD,COL_PC,seg=12)
+
+# 2.5-inch SATA hard drive UNDER the optical drive, in a real carrier.
+box("V17_HDD_CARRIER",V17L(1.05,-0.55,0.25),(0.95,1.35,0.06),V17_SHEET,COL_PC,0.025)
+box("V17_HDD",V17L(1.05,-0.55,0.34),(0.86,1.18,0.075),V17_DARK,COL_PC,0.022)
+box("V17_HDD_LABEL",V17L(1.05,-0.55,0.385),(0.62,0.76,0.004),V17_WHITE,COL_PC,0.002)
+for x,y in ((0.70,-1.12),(1.40,-1.12),(0.70,0.02),(1.40,0.02)):
+    cyl("V17_HDD_SCREW",V17L(x,y,0.42),0.028,0.018,V17_GOLD,COL_PC,seg=12)
+
+# Slimline optical drive physically above/forward of the HDD.
+box("V17_OPTICAL_BODY",V17L(1.05,-1.60,0.43),(1.02,0.56,0.10),V17_DARK,COL_PC,0.025)
+box("V17_OPTICAL_BRACKET",V17L(1.05,-1.02,0.43),(1.02,0.035,0.10),V17_SHEET,COL_PC,0.008)
+cable("V17_ODD_SATA",[(0.55,-1.05,0.23),(0.85,-1.25,0.34),(1.05,-1.48,0.43)],0.028,V17_RUBBER,COL_PC)
+
+# Front speaker between the fan and I/O, as documented for the USDT.
+box("V17_SPEAKER",V17L(-0.35,-2.12,0.47),(0.28,0.12,0.20),V17_BLACK,COL_PC,0.025)
+for i in range(5):
+    box("V17_SPEAKER_GRILLE",V17L(-0.45+i*0.05,-2.19,0.47),(0.012,0.008,0.13),V17_SHEET,COL_PC,0.002)
+
+# SATA / power / fan cables, routed along the chassis instead of floating.
+cable("V17_SATA_HDD",[(0.10,-0.20,0.24),(0.55,-0.10,0.34),(0.95,-0.40,0.40)],0.025,V17_RUBBER,COL_PC)
+cable("V17_BOARD_POWER",[(0.72,1.35,0.24),(0.95,1.65,0.28),(1.10,2.00,0.30)],0.032,V17_RUBBER,COL_PC)
+cable("V17_FAN_CABLE",[(-1.75,-2.00,0.70),(-1.35,-1.72,0.30),(-1.10,-1.15,0.25)],0.018,V17_RUBBER,COL_PC)
+
+# Side access panel is a REMOVABLE sliding panel, not a hinged sci-fi lid.
+box("V17_ACCESS_PANEL",(-0.15,9.92,1.48),(2.35,0.55,0.035),V17_BLACK,COL_PC,0.025)
+for x in (-1.95,-1.30,-0.65,0.0,0.65,1.30,1.95):
+    box("V17_PANEL_RIB",(x,9.92,1.525),(0.025,0.48,0.025),V17_SHEET,COL_PC,0.004)
+box("V17_THUMBSCREW",(2.05,9.37,1.54),0.06,0.025,V17_ALU,COL_PC,0.0) if False else None
+
+# Minimal real service screws; no decorative futuristic fasteners.
+for x,y in ((-2.15,-2.08),(2.15,-2.08),(-2.15,2.08),(2.15,2.08)):
+    cyl("V17_CHASSIS_SCREW",V17L(x,y,1.31),0.045,0.022,V17_ALU,COL_PC,seg=16)
+
+# Service label and small certification label, kept subtle.
+box("V17_SERVICE_LABEL",V17L(1.55,1.90,1.31),(0.48,0.30,0.004),V17_WHITE,COL_PC,0.003)
+text("V17_SERVICE_TEXT","HP / USDT",(1.55,9.08,1.32),0.075,V17_BLACK,COL_PC)
+
+# Final PC collection only; no changes to cameras/lights/lab collections.
+bpy.context.view_layer.update()
+print("V17 HP COMPAQ 8200 USDT REBUILD COMPLETE — LAB UNCHANGED")
