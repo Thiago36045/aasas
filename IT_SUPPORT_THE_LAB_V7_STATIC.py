@@ -3000,9 +3000,27 @@ bpy.context.view_layer.update()
 # V16-V22 — MASTER REALISM PASS
 # ============================================================
 def _pbr15(name,base,metal=0.0,rough=0.4):
-    m=bpy.data.materials.get(name) or bpy.data.materials.new(name); m.use_nodes=True
-    bs=m.node_tree.nodes.get("Principled BSDF"); bs.inputs["Base Color"].default_value=(*base,1)
-    bs.inputs["Metallic"].default_value=metal; bs.inputs["Roughness"].default_value=rough
+    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes=True
+    nt=m.node_tree
+    bs=nt.nodes.get("Principled BSDF")
+    if bs is None:
+        for n in nt.nodes:
+            if n.type=="BSDF_PRINCIPLED":
+                bs=n
+                break
+    if bs is None:
+        nt.nodes.clear()
+        out=nt.nodes.new("ShaderNodeOutputMaterial")
+        bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
+        nt.links.new(bs.outputs.get("BSDF"),out.inputs.get("Surface"))
+    def _set(sock,val):
+        inp=bs.inputs.get(sock)
+        if inp is not None:
+            inp.default_value=val
+    _set("Base Color",(*base,1))
+    _set("Metallic",metal)
+    _set("Roughness",rough)
     return m
 
 V16_EDGE=_pbr15("V16 Multilayer PCB Edge",(0.025,0.035,0.030),0.05,0.52)
