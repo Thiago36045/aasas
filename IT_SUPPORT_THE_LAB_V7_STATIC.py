@@ -3243,3 +3243,175 @@ print("Geometry moved: NO")
 print("Microdetail: shaders only")
 print("Lighting: neutral key / soft fill / blue HP rim / controlled reflections")
 print("="*70)
+
+
+# ============================================================
+# V14.4 / V14.5 — HERO HP8200 + ENVIRONMENT REFINEMENT
+# Shader/material/lighting only. NO geometry creation or movement.
+# ============================================================
+
+def _v144_pbr(name, metallic=None, rough=None, base=None, coat=None, coat_rough=None):
+    m=bpy.data.materials.get(name)
+    if not m or not m.use_nodes:
+        return
+    bs=m.node_tree.nodes.get("Principled BSDF")
+    if not bs:
+        return
+    vals={"Metallic":metallic,"Roughness":rough,"Base Color":base,
+          "Coat Weight":coat,"Coat Roughness":coat_rough}
+    # Blender version compatibility: Coat inputs have changed names.
+    if "Coat" in bs.inputs and coat is not None: bs.inputs["Coat"].default_value=coat
+    if "Coat Weight" in bs.inputs and coat is not None: bs.inputs["Coat Weight"].default_value=coat
+    if "Coat Roughness" in bs.inputs and coat_rough is not None: bs.inputs["Coat Roughness"].default_value=coat_rough
+    for k,v in vals.items():
+        if k in bs.inputs and v is not None:
+            if k=="Base Color":
+                bs.inputs[k].default_value=(*v,1.0)
+            elif k not in ("Coat Weight","Coat Roughness"):
+                bs.inputs[k].default_value=v
+
+# --- HERO MATERIALS: tune only materials that already exist ---
+_v144_pbr("HP Black Plastic",metallic=0.0,rough=0.30,base=(0.009,0.011,0.015),coat=0.30,coat_rough=0.075)
+_v144_pbr("PCB",metallic=0.0,rough=0.27,base=(0.004,0.048,0.012),coat=0.06,coat_rough=0.12)
+_v144_pbr("Steel",metallic=1.0,rough=0.22,coat=0.12,coat_rough=0.07)
+_v144_pbr("Aluminum",metallic=1.0,rough=0.20,coat=0.10,coat_rough=0.06)
+_v144_pbr("Copper",metallic=1.0,rough=0.24)
+_v144_pbr("Rubber",metallic=0.0,rough=0.74,coat=0.02,coat_rough=0.20)
+_v144_pbr("Glass",metallic=0.0,rough=0.015,coat=0.10,coat_rough=0.03)
+_v144_pbr("Keyboard Keys",metallic=0.0,rough=0.39,coat=0.13,coat_rough=0.11)
+
+# Materials may have different names in the historical V14 graph.
+for _n in ("Paste New","Thermal Paste New"):
+    _v144_pbr(_n,metallic=0.0,rough=0.25)
+for _n in ("Paste Dry","Thermal Paste Dry"):
+    _v144_pbr(_n,metallic=0.0,rough=0.82)
+
+# --- HERO-SPECIFIC MICROVARIATION ---
+def _v144_hero_micro(mat_name, scale=320.0, strength=0.008):
+    m=bpy.data.materials.get(mat_name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get("V144_HERO_MICRO"):
+        return
+    nt=m.node_tree; bs=nt.nodes.get("Principled BSDF")
+    if not bs: return
+    tc=nt.nodes.get("Texture Coordinate")
+    if not tc: tc=nt.nodes.new("ShaderNodeTexCoord")
+    n=nt.nodes.new("ShaderNodeTexNoise")
+    n.name="V144_HERO_MICRO"; n.inputs["Scale"].default_value=scale
+    n.inputs["Detail"].default_value=3.0; n.inputs["Roughness"].default_value=0.52
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    b=nt.nodes.new("ShaderNodeBump")
+    b.inputs["Strength"].default_value=strength
+    b.inputs["Distance"].default_value=0.0012
+    nt.links.new(n.outputs["Fac"],b.inputs["Height"])
+    nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
+
+for _n,_s,_b in [
+    ("HP Black Plastic",280,0.006),
+    ("PCB",420,0.0035),
+    ("Aluminum",360,0.005),
+    ("Steel",320,0.004),
+    ("Rubber",190,0.009),
+]:
+    _v144_hero_micro(_n,_s,_b)
+
+# --- SUBTLE EDGE WEAR: shader-only, never changes silhouette ---
+def _v144_edge_wear(mat_name):
+    m=bpy.data.materials.get(mat_name)
+    if not m or not m.use_nodes or m.node_tree.nodes.get("V144_EDGE_WEAR"):
+        return
+    nt=m.node_tree; bs=nt.nodes.get("Principled BSDF")
+    if not bs: return
+    geom=nt.nodes.get("Geometry")
+    if not geom: geom=nt.nodes.new("ShaderNodeNewGeometry")
+    layer=nt.nodes.new("ShaderNodeLayerWeight")
+    layer.name="V144_EDGE_WEAR"
+    layer.inputs["Blend"].default_value=0.18
+    # Facing is used as a restrained edge-response mask.
+    ramp=nt.nodes.new("ShaderNodeValToRGB")
+    ramp.name="V144_EDGE_WEAR_MASK"
+    ramp.color_ramp.elements[0].position=0.34
+    ramp.color_ramp.elements[1].position=0.72
+    ramp.color_ramp.elements[0].color=(0.30,0.30,0.30,1)
+    ramp.color_ramp.elements[1].color=(0.78,0.78,0.78,1)
+    nt.links.new(layer.outputs["Facing"],ramp.inputs["Fac"])
+    # Mix into roughness only: worn edges catch highlights without painting them.
+    if "Roughness" in bs.inputs and not bs.inputs["Roughness"].is_linked:
+        nt.links.new(ramp.outputs["Color"],bs.inputs["Roughness"])
+
+for _n in ("HP Black Plastic","Steel","Aluminum"):
+    _v144_edge_wear(_n)
+
+# --- COMPONENT MATERIAL SEPARATION ---
+# Existing named materials only; no objects are created.
+for _n,_rough in {
+    "CPU":0.23, "Chipset":0.28, "RAM":0.31,
+    "CPU IHS":0.19, "Heatsink":0.21, "Fan":0.36,
+    "SATA Cable":0.42, "Power Cable":0.44, "ODD Cable":0.40,
+    "Thermal Paste":0.26, "Thermal Paste Dry":0.84
+}.items():
+    _v144_pbr(_n,rough=_rough)
+
+# --- ENVIRONMENT MICRO-ROUGHNESS ---
+for _n,_rough in {
+    "Wall Panel Side":0.34, "Wall Panel Back":0.34,
+    "Ceiling Panel":0.40, "Floor":0.18, "Floor Tile":0.22
+}.items():
+    _v144_pbr(_n,rough=_rough)
+
+# --- AMBIENT DUST / CONTACT INTEGRATION ---
+# No dust geometry. A very weak world contribution preserves clean blacks.
+try:
+    bg=scene.world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Strength"].default_value=0.13
+except Exception:
+    pass
+
+# --- HERO RIM: controlled blue edge separation ---
+for _name,_energy,_size,_color in [
+    ("HERO_RIM",360,3.6,(0.22,0.40,1.0)),
+    ("HERO_TOP",560,3.4,(1.0,0.97,0.91)),
+    ("HERO_KEY",1200,4.0,(1.0,0.985,0.95)),
+]:
+    _o=bpy.data.objects.get(_name)
+    if _o and _o.type=="LIGHT":
+        _o.data.energy=_energy*LIGHT_SCALE
+        _o.data.color=_color
+        if _o.data.type=="AREA": _o.data.size=_size
+        try: _o.data.use_shadow=True
+        except Exception: pass
+
+# Lower the general room fill so the hero naturally separates from the lab.
+_o=bpy.data.objects.get("FILL_LIGHT")
+if _o and _o.type=="LIGHT":
+    _o.data.energy=175*LIGHT_SCALE
+    _o.data.color=(0.76,0.82,1.0)
+
+# Keep reflections readable without a cyan wash.
+_o=bpy.data.objects.get("BACK_LIGHT")
+if _o and _o.type=="LIGHT":
+    _o.data.energy=360*LIGHT_SCALE
+    _o.data.color=(0.38,0.55,1.0)
+
+# --- V14.5: subtle depth/atmosphere through existing world/compositor ---
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.exposure=-0.10
+except Exception:
+    pass
+
+# Preserve existing camera positions. Only refine DOF if cameras exist.
+for _name,_fstop in [("CAMERA_MASTER",9.0),("CAMERA_HERO_PC",5.6),("CAMERA_WIDE",10.0)]:
+    _cam=bpy.data.objects.get(_name)
+    if _cam and _cam.type=="CAMERA":
+        _cam.data.dof.use_dof=True
+        _cam.data.dof.aperture_fstop=_fstop
+
+print("="*70)
+print("V14.4 / V14.5 — HERO HP8200 + ENVIRONMENT REFINEMENT")
+print("Geometry created: NO")
+print("Geometry moved: NO")
+print("Hero: HP plastic / metal / PCB / cooling / cables / glass")
+print("Environment: subtle roughness / integration / controlled DOF")
+print("Lighting: restrained blue HP rim")
+print("="*70)
