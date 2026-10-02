@@ -1498,1314 +1498,158 @@ _v75_apply_realistic_materials()
 
 
 
-# ============================================================
-# V8 HERO PC — PHOTOREAL HARDWARE PASS
-# Limpieza total + microdetalle de componentes + materiales PBR.
-# ============================================================
-
-def _v8_make(name, base, metallic=0.0, rough=0.35, scale=320.0, bump=0.10):
-    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    m.use_nodes=True
-    nt=m.node_tree
-    nt.nodes.clear()
-    out=nt.nodes.new("ShaderNodeOutputMaterial")
-    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tc=nt.nodes.new("ShaderNodeTexCoord")
-    noise=nt.nodes.new("ShaderNodeTexNoise")
-    ramp=nt.nodes.new("ShaderNodeValToRGB")
-    noise.inputs["Scale"].default_value=scale
-    noise.inputs["Detail"].default_value=4.0
-    noise.inputs["Roughness"].default_value=0.58
-    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
-    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
-    ramp.color_ramp.elements[0].color=(*tuple(max(v*0.82,0.0) for v in base),1)
-    ramp.color_ramp.elements[1].color=(*tuple(min(v*1.18,1.0) for v in base),1)
-    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
-    bs.inputs["Metallic"].default_value=metallic
-    bs.inputs["Roughness"].default_value=rough
-    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.16
-    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.12
-    if bump:
-        b=nt.nodes.new("ShaderNodeBump")
-        b.inputs["Strength"].default_value=bump
-        b.inputs["Distance"].default_value=0.006
-        nt.links.new(noise.outputs["Fac"],b.inputs["Height"])
-        nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
-    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
-    m.diffuse_color=(*base,1)
-    return m
-
-V8_CPU_IHS=_v8_make("V8 CPU IHS",(0.46,0.49,0.53),0.96,0.16,480,0.07)
-V8_STORAGE=_v8_make("V8 Storage Housing",(0.045,0.052,0.062),0.82,0.22,360,0.08)
-V8_CHIP=_v8_make("V8 Silicon Package",(0.008,0.010,0.014),0.10,0.28,520,0.08)
-V8_SOLDER=_v8_make("V8 Solder",(0.48,0.50,0.52),0.86,0.20,700,0.05)
-V8_SILK=_v8_make("V8 PCB Silkscreen",(0.62,0.67,0.58),0.05,0.40,900,0.03)
-V8_ALU=_v8_make("V8 Brushed Aluminum",(0.54,0.57,0.61),0.97,0.18,650,0.08)
-
-# Eliminar físicamente todas las motas de polvo de la PC.
-for o in list(bpy.data.objects):
-    if o.name.startswith("HP_DUST"):
-        bpy.data.objects.remove(o, do_unlink=True)
-if "DUST_MESH" in bpy.data.meshes:
-    dm=bpy.data.meshes.get("DUST_MESH")
-    if dm and dm.users==0:
-        bpy.data.meshes.remove(dm)
-dust_items=[]
-
-# Ocultar/eliminar el material de polvo para impedir que vuelva a aparecer.
-dust_mat=bpy.data.materials.get("Dust")
-if dust_mat:
-    for o in bpy.data.objects:
-        if o.type=="MESH":
-            for i,mm in enumerate(list(o.data.materials)):
-                if mm==dust_mat:
-                    o.data.materials.pop(index=i)
-    if dust_mat.users==0:
-        bpy.data.materials.remove(dust_mat)
-
-# Asignación de materiales hiper-específicos a los componentes reales.
-for o in list(bpy.data.objects):
-    if o.type!="MESH" or not o.name.startswith("HP_"):
-        continue
-    n=o.name
-    if n=="HP_CPU":
-        o.data.materials.clear(); o.data.materials.append(V8_CPU_IHS)
-    elif "STORAGE" in n or "SATA" in n:
-        o.data.materials.clear(); o.data.materials.append(V8_STORAGE)
-    elif "CHIP" in n or "IC_" in n or "BIOS" in n:
-        o.data.materials.clear(); o.data.materials.append(V8_CHIP)
-    elif "HEATPIPE" in n:
-        o.data.materials.clear(); o.data.materials.append(MAT_COPPER)
-    elif "FIN" in n or "COOLER_PLATE" in n:
-        o.data.materials.clear(); o.data.materials.append(V8_ALU)
-    elif "SODIMM_CHIP" in n:
-        o.data.materials.clear(); o.data.materials.append(V8_CHIP)
-
-# Pistas de cobre ultrafinas y pads alrededor del área de CPU/RAM.
-for i in range(24):
-    x=-2.05+(i%8)*0.26
-    y=-1.55+(i//8)*0.55
-    box("V8_PCB_TRACE",L(x,y,0.225),(0.105,0.009,0.003),MAT_COPPER,COL_PC,0.002)
-for i in range(18):
-    x=-1.72+(i%9)*0.20
-    y=0.95+(i//9)*0.32
-    box("V8_SOLDER_PAD",L(x,y,0.228),(0.035,0.022,0.004),V8_SOLDER,COL_PC,0.003)
-
-# Red de pequeños componentes SMD para dar escala real a la placa.
-for i in range(20):
-    x=-2.12+(i%10)*0.22
-    y=0.95+(i//10)*0.24
-    box("V8_SMD",L(x,y,0.285),(0.035,0.018,0.012),V8_CHIP,COL_PC,0.003)
-
-# Detalle de contactos dorados del módulo RAM.
-for i in range(18):
-    y=-1.62+i*0.07
-    box("V8_RAM_CONTACT",L(0.03,y,0.332),(0.012,0.022,0.006),MAT_GOLD,COL_PC,0.001)
-
-# Ventilador: tornillería, eje y aro metálico más realistas.
-cyl("V8_FAN_HUB_RING",L(-1.0,-0.95,0.395),0.19,0.018,V8_ALU,COL_PC,seg=48)
-for a in range(8):
-    ang=2*math.pi*a/8
-    cyl("V8_FAN_SCREW",L(-1.0+0.51*math.cos(ang),-0.95+0.51*math.sin(ang),0.35),
-        0.022,0.025,MAT_STEEL,COL_PC,seg=20)
-
-# Conectores y contactos internos de alta resolución visual.
-for i in range(12):
-    x=0.72+i*0.12
-    box("V8_CONNECTOR_PIN",L(x,1.78,0.285),(0.018,0.045,0.006),MAT_GOLD,COL_PC,0.001)
-for i in range(8):
-    x=0.95+i*0.12
-    box("V8_POWER_PIN",L(x,1.98,0.285),(0.018,0.035,0.006),MAT_GOLD,COL_PC,0.001)
-
-# Etiquetas técnicas microscópicas sobre la PCB.
-for i,label in enumerate(("VRM","DDR4","SATA","LAN")):
-    text("V8_PCB_LABEL",label,L(-1.95+i*0.62,1.72,0.292),0.065,V8_SILK,COL_PC)
-
-# Limpieza visual del chasis: sin polvo, pero conserva pasta térmica como detalle técnico.
-for o in bpy.data.objects:
-    if o.type=="MESH" and "DUST" in o.name.upper():
-        o.hide_render=True
-        o.hide_viewport=True
-
-# 4K real de salida.
-scene.render.resolution_x=3840
-scene.render.resolution_y=2160
-scene.render.resolution_percentage=100
-
-
-
 
 # ============================================================
-# V10 — HP 8200 REALISM / GEOMETRY INTEGRITY PASS
-# Corrige la causa de los elementos flotantes de V9:
-# se eliminan los objetos V9 geométricos mal ubicados y se
-# reconstruye el detalle tomando como referencia la geometría
-# REAL ya existente del HP 8200.
-# ============================================================
-
-# 1) LIMPIEZA DE GEOMETRIA EXPERIMENTAL V9
-# Los materiales V9 se conservan; los meshes V9 anteriores se eliminan
-# para evitar duplicados, piezas flotantes y componentes fuera del chasis.
-for _o in list(bpy.data.objects):
-    if _o.name.startswith(("V9_", "V10_")):
-        bpy.data.objects.remove(_o, do_unlink=True)
-
-# 2) MATERIALES PBR DE ALTA CALIDAD
-def _v10_pbr(name, base, metallic=0.0, rough=0.35, micro=180.0,
-             micro_strength=0.10, coat=0.0, anisotropic=0.0):
-    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    m.use_nodes=True
-    nt=m.node_tree
-    nt.nodes.clear()
-    out=nt.nodes.new("ShaderNodeOutputMaterial")
-    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tc=nt.nodes.new("ShaderNodeTexCoord")
-    noise=nt.nodes.new("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value=micro
-    noise.inputs["Detail"].default_value=5.0
-    noise.inputs["Roughness"].default_value=0.62
-    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
-
-    ramp=nt.nodes.new("ShaderNodeValToRGB")
-    ramp.color_ramp.elements[0].position=0.32
-    ramp.color_ramp.elements[1].position=0.68
-    ramp.color_ramp.elements[0].color=(*tuple(max(c*0.82,0.0) for c in base),1)
-    ramp.color_ramp.elements[1].color=(*tuple(min(c*1.18,1.0) for c in base),1)
-    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
-    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
-
-    bs.inputs["Metallic"].default_value=metallic
-    bs.inputs["Roughness"].default_value=rough
-    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=coat
-    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.10
-    if "Anisotropic IOR Level" in bs.inputs: bs.inputs["Anisotropic IOR Level"].default_value=anisotropic
-
-    bump=nt.nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value=micro_strength
-    bump.inputs["Distance"].default_value=0.0025
-    nt.links.new(noise.outputs["Fac"],bump.inputs["Height"])
-    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
-    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
-    m.diffuse_color=(*base,1)
-    return m
-
-V10_ABS=_v10_pbr("V10 ABS",(0.012,0.014,0.018),0.03,0.30,260,0.10,0.28)
-V10_PCB=_v10_pbr("V10 PCB",(0.004,0.055,0.012),0.10,0.32,420,0.075,0.06)
-V10_SILICON=_v10_pbr("V10 Silicon",(0.005,0.007,0.010),0.08,0.28,700,0.07,0.12)
-V10_ALU=_v10_pbr("V10 Aluminum",(0.48,0.51,0.55),0.97,0.22,900,0.045,0.18,0.35)
-V10_STEEL=_v10_pbr("V10 Steel",(0.18,0.21,0.25),0.96,0.25,700,0.05,0.12,0.12)
-V10_COPPER=_v10_pbr("V10 Copper",(0.43,0.075,0.018),0.98,0.23,1000,0.045,0.08,0.22)
-V10_GOLD=_v10_pbr("V10 Gold",(0.68,0.39,0.045),0.99,0.17,1200,0.035,0.08,0.18)
-V10_RUBBER=_v10_pbr("V10 Rubber",(0.003,0.004,0.006),0.0,0.66,180,0.12,0.02)
-V10_THERMAL=_v10_pbr("V10 Thermal Paste",(0.68,0.71,0.75),0.05,0.34,240,0.035,0.12)
-
-# 3) REASIGNACION SEGURA: solo componentes inequívocos.
-# No se cambia el material de toda la HP_ por nombre parcial.
-for o in list(bpy.data.objects):
-    if o.type!="MESH" or not o.name.startswith("HP_"):
-        continue
-    n=o.name.upper()
-    if n in {"HP_MOTHERBOARD"}:
-        o.data.materials.clear(); o.data.materials.append(V10_PCB)
-    elif n in {"HP_CPU"}:
-        o.data.materials.clear(); o.data.materials.append(V10_ALU)
-    elif "CHIP" in n or "IC_" in n or "BIOS" in n or "SODIMM_CHIP" in n:
-        o.data.materials.clear(); o.data.materials.append(V10_SILICON)
-    elif "HEATPIPE" in n:
-        o.data.materials.clear(); o.data.materials.append(V10_COPPER)
-    elif "FIN" in n or "COOLER_PLATE" in n:
-        o.data.materials.clear(); o.data.materials.append(V10_ALU)
-    elif "SCREW" in n or "BRACKET" in n or "SOCKET" in n:
-        o.data.materials.clear(); o.data.materials.append(V10_STEEL)
-    elif "CABLE" in n or "WIRE" in n:
-        o.data.materials.clear(); o.data.materials.append(V10_RUBBER)
-
-# 4) DETALLE REAL DE LA PLACA — EN LAS COORDENADAS REALES DEL MODELO
-# CPU real: (-1.0, 0.35), RAM real: (0.03,-1.0)
-# Esto evita piezas suspendidas en posiciones inventadas.
-for i,(x,y) in enumerate(((-2.15,-1.75),(0.20,-1.75),(-2.15,1.85),(0.20,1.85))):
-    cyl("V10_MB_SCREW_%02d"%i,L(x,y,0.235),0.045,0.028,V10_STEEL,COL_PC,seg=32)
-
-# SMD / resistencias junto a VRM y zona de RAM.
-for i in range(24):
-    x=-1.95+(i%12)*0.16
-    y=-1.72+(i//12)*0.24
-    box("V10_SMD_%02d"%i,L(x,y,0.285),(0.045,0.018,0.012),
-        V10_SILICON,COL_PC,0.004)
-
-# Contactos dorados CORRECTAMENTE alineados con la SO-DIMM existente.
-for i in range(18):
-    y=-1.58+i*0.071
-    box("V10_RAM_CONTACT_%02d"%i,L(0.03,y,0.335),(0.012,0.025,0.006),
-        V10_GOLD,COL_PC,0.0015)
-
-# VRM metálicos al lado de la CPU, no en el aire.
-for i in range(8):
-    x=-1.95+i*0.24
-    box("V10_VRM_%02d"%i,L(x,0.98,0.30),(0.075,0.065,0.035),
-        V10_STEEL,COL_PC,0.008)
-
-# 5) CPU REALISTA: sustrato + IHS + pasta, exactamente sobre el CPU original.
-box("V10_CPU_SUBSTRATE",L(-1.0,0.35,0.345),(0.40,0.40,0.018),V10_SILICON,COL_PC,0.010)
-box("V10_CPU_IHS",L(-1.0,0.35,0.405),(0.30,0.30,0.025),V10_ALU,COL_PC,0.018)
-
-# 6) DISIPADOR: SOLO SOBRE EL CONJUNTO COOLER REAL EXISTENTE.
-# Se usan las coordenadas de HP_COOLER_PLATE / HP_HEATPIPE / HP_FIN.
-for i,x in enumerate((-1.30,-1.0,-0.70)):
-    cyl("V10_HEATPIPE_%02d"%i,L(x,0.98,0.50),0.028,1.10,V10_COPPER,COL_PC,
-        rot=(R90,0,0),seg=48)
-
-# Aletas adicionales correctamente colocadas dentro de la torre del disipador.
-for i in range(10):
-    x=-1.55+i*0.12
-    box("V10_COOL_FIN_%02d"%i,L(x,1.45,0.48),(0.012,0.39,0.17),
-        V10_ALU,COL_PC,0.004)
-
-# 7) VENTILADOR REAL: centrado exactamente en FAN_C.
-# No se crean palas flotantes; se refuerza el hub y el aro existentes.
-cyl("V10_FAN_HUB",L(FAN_C[0],FAN_C[1],0.33),0.14,0.12,V10_STEEL,COL_PC,seg=64)
-cyl("V10_FAN_CAP",L(FAN_C[0],FAN_C[1],0.40),0.07,0.018,MAT_CYAN,COL_PC,seg=48)
-for i in range(8):
-    a0=2*math.pi*i/8
-    cyl("V10_FAN_SCREW_%02d"%i,
-        L(FAN_C[0]+0.50*math.cos(a0),FAN_C[1]+0.50*math.sin(a0),0.285),
-        0.022,0.018,V10_STEEL,COL_PC,seg=24)
-
-# 8) CABLEADO: se mantiene el cableado funcional original.
-# Añadimos clips muy pequeños y correctamente apoyados en la placa.
-for i,(x,y) in enumerate(((0.25,1.45),(0.55,1.62),(0.35,-0.10))):
-    box("V10_CABLE_CLIP_%02d"%i,L(x,y,0.27),(0.045,0.025,0.018),
-        V10_RUBBER,COL_PC,0.004)
-
-# 9) LIMPIEZA ABSOLUTA
-# Nada de polvo, residuos o geometría de las iteraciones anteriores.
-for o in list(bpy.data.objects):
-    if o.name.startswith("HP_DUST") or "DUST" in o.name.upper():
-        bpy.data.objects.remove(o,do_unlink=True)
-for m in list(bpy.data.materials):
-    if m.name.startswith("Dust"):
-        try:
-            bpy.data.materials.remove(m)
-        except Exception:
-            pass
-
-# 10) SOMBRAS / RENDER FOTORREALISTA
-# RTX 3090: Cycles + OptiX, alta calidad. Si OptiX no existe, Blender
-# conserva Cycles y usa el dispositivo disponible.
-try:
-    scene.render.engine="BLENDER_EEVEE_NEXT"
-except Exception:
-    pass
-
-# EEVEE: sombras y ray tracing robustos para el viewport/render rápido.
-try:
-    scene.eevee.taa_render_samples=256
-except Exception:
-    pass
-try:
-    scene.eevee.shadow_ray_count=8
-except Exception:
-    pass
-try:
-    scene.eevee.shadow_step_count=16
-except Exception:
-    pass
-try:
-    scene.eevee.use_raytracing=True
-except Exception:
-    pass
-
-# Calidad final 4K.
-scene.render.resolution_x=3840
-scene.render.resolution_y=2160
-scene.render.resolution_percentage=100
-scene.render.image_settings.file_format="PNG"
-
-# ============================================================
-# FIN V10 — geometria integrada y materiales fisicos
-# ============================================================
-
-
-# ============================================================
-# V11 — EXTREME REAL PCB / MOTHERBOARD MATERIAL PASS
-# PCB profesional: solder mask, fibra de vidrio, cobre, vias,
-# pads, silkscreen, microtextura y trazas finas.
-# Todo queda físicamente apoyado sobre HP_MOTHERBOARD.
-# ============================================================
-
-def _v11_pcb_material():
-    m=bpy.data.materials.get("V11 REAL PCB") or bpy.data.materials.new("V11 REAL PCB")
-    m.use_nodes=True
-    nt=m.node_tree; nt.nodes.clear()
-    out=nt.nodes.new("ShaderNodeOutputMaterial")
-    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tc=nt.nodes.new("ShaderNodeTexCoord")
-
-    # Base de fibra de vidrio verde oscuro.
-    noise=nt.nodes.new("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value=420.0
-    noise.inputs["Detail"].default_value=8.0
-    noise.inputs["Roughness"].default_value=0.68
-    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
-
-    fiber=nt.nodes.new("ShaderNodeTexWave")
-    fiber.wave_type="BANDS"
-    fiber.bands_direction="X"
-    fiber.inputs["Scale"].default_value=900.0
-    fiber.inputs["Distortion"].default_value=5.0
-    fiber.inputs["Detail"].default_value=5.0
-    fiber.inputs["Detail Scale"].default_value=2.5
-    nt.links.new(tc.outputs["Object"],fiber.inputs["Vector"])
-
-    mix=nt.nodes.new("ShaderNodeMixRGB")
-    mix.blend_type="MULTIPLY"
-    mix.inputs[0].default_value=0.22
-    mix.inputs[2].default_value=(0.008,0.085,0.018,1)
-    nt.links.new(noise.outputs["Fac"],mix.inputs[1])
-    nt.links.new(fiber.outputs["Color"],mix.inputs[2])
-
-    # Variación muy sutil del solder mask, no un plástico verde plano.
-    ramp=nt.nodes.new("ShaderNodeValToRGB")
-    ramp.color_ramp.elements[0].color=(0.002,0.028,0.006,1)
-    ramp.color_ramp.elements[1].color=(0.010,0.115,0.025,1)
-    ramp.color_ramp.elements[0].position=0.25
-    ramp.color_ramp.elements[1].position=0.75
-    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
-    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
-
-    bs.inputs["Metallic"].default_value=0.12
-    bs.inputs["Roughness"].default_value=0.31
-    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.22
-    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.16
-
-    bump=nt.nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value=0.13
-    bump.inputs["Distance"].default_value=0.0012
-    nt.links.new(noise.outputs["Fac"],bump.inputs["Height"])
-    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
-    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
-    m.diffuse_color=(0.004,0.08,0.015,1)
-    return m
-
-V11_PCB=_v11_pcb_material()
-V11_COPPER=_v10_pbr("V11 Copper",(0.50,0.075,0.018),0.98,0.20,1200,0.025,0.08,0.25)
-V11_GOLD=_v10_pbr("V11 ENIG Gold",(0.72,0.46,0.075),0.99,0.16,1500,0.018,0.10,0.20)
-V11_SOLDER=_v10_pbr("V11 Solder",(0.43,0.46,0.49),0.92,0.19,1100,0.025,0.06,0.15)
-V11_BLACK=_v10_pbr("V11 IC Black",(0.003,0.004,0.006),0.08,0.25,900,0.045,0.16)
-V11_SILK=_v10_pbr("V11 Silkscreen",(0.70,0.73,0.65),0.02,0.43,800,0.018,0.04)
-
-# La placa original es la referencia absoluta.
-mb=bpy.data.objects.get("HP_MOTHERBOARD")
-if mb and mb.type=="MESH":
-    mb.data.materials.clear()
-    mb.data.materials.append(V11_PCB)
-
-# Geometría de cobre extremadamente fina, siempre dentro del área de la PCB.
-# Se usa z=0.215 para quedar sobre el solder mask y no flotar.
-_trace_z=0.216
-_pad_z=0.219
-_via_z=0.222
-
-# Tramas de trazas principales: líneas finas con cambios de dirección.
-_trace_paths=[
-    [(-2.05,-1.55),(-1.35,-1.55),(-1.10,-1.25),(-0.55,-1.25),(-0.30,-1.05)],
-    [(-2.05,-1.30),(-1.55,-1.30),(-1.30,-0.90),(-0.55,-0.90),(-0.30,-0.65)],
-    [(-1.90,-0.55),(-1.45,-0.55),(-1.20,-0.15),(-0.55,-0.15),(-0.28,0.18)],
-    [(-1.95,0.80),(-1.55,0.80),(-1.30,0.48),(-0.65,0.48),(-0.35,0.78)],
-    [(-1.85,1.35),(-1.40,1.35),(-1.15,1.05),(-0.55,1.05),(-0.30,1.35)],
-    [(-0.25,-1.70),(0.05,-1.40),(0.05,-0.75),(0.18,-0.45),(0.18,0.10)],
-    [(-0.15,0.35),(0.05,0.65),(0.05,1.10),(0.22,1.40),(0.22,1.75)],
-]
-for ti,path in enumerate(_trace_paths):
-    for si in range(len(path)-1):
-        (x1,y1),(x2,y2)=path[si],path[si+1]
-        dx=x2-x1; dy=y2-y1
-        ln=max((dx*dx+dy*dy)**0.5,0.001)
-        mid=(x1+dx*0.5,y1+dy*0.5)
-        ang=math.atan2(dy,dx)
-        box("V11_COPPER_TRACE_%02d_%02d"%(ti,si),
-            L(mid[0],mid[1],_trace_z),(ln*0.5,0.008,0.0028),
-            V11_COPPER,COL_PC,0.0015,rot=(0,0,ang))
-
-# Microtrazas paralelas para densidad visual.
-for row in range(9):
-    y=-1.72+row*0.40
-    for seg in range(3):
-        x=-2.08+seg*0.58
-        box("V11_MICROTRACE",L(x+0.23,y,_trace_z+0.001),
-            (0.22,0.0035,0.0018),V11_COPPER,COL_PC,0.0008)
-
-# Vias reales: anillos metálicos con centro oscuro.
-for row in range(7):
-    for col in range(6):
-        x=-2.00+col*0.36+(row%2)*0.06
-        y=-1.70+row*0.52
-        if x>0.28: continue
-        cyl("V11_VIA_RING",L(x,y,_via_z),0.026,0.006,V11_COPPER,COL_PC,seg=20)
-        cyl("V11_VIA_HOLE",L(x,y,_via_z+0.004),0.010,0.007,V11_BLACK,COL_PC,seg=16)
-
-# Pads ENIG alrededor de reguladores, conectores y memoria.
-for i in range(12):
-    x=-1.92+i*0.16
-    box("V11_ENIG_PAD",L(x,1.78,_pad_z),(0.045,0.018,0.003),V11_GOLD,COL_PC,0.002)
-
-for i in range(10):
-    x=-1.90+i*0.18
-    box("V11_SOLDER_PAD",L(x,1.05,_pad_z),(0.032,0.022,0.003),V11_SOLDER,COL_PC,0.002)
-
-# Pequeños componentes SMD realistas: cuerpo negro + terminales metálicos.
-for i in range(18):
-    x=-1.90+(i%9)*0.21
-    y=-1.72+(i//9)*0.28
-    box("V11_SMD_BODY",L(x,y,0.255),(0.045,0.020,0.020),V11_BLACK,COL_PC,0.004)
-    box("V11_SMD_TERM_A",L(x-0.038,y,0.256),(0.009,0.022,0.011),V11_SOLDER,COL_PC,0.002)
-    box("V11_SMD_TERM_B",L(x+0.038,y,0.256),(0.009,0.022,0.011),V11_SOLDER,COL_PC,0.002)
-
-# ICs secundarios, todos apoyados directamente sobre la placa.
-for i,(x,y,sx,sy) in enumerate([
-    (-1.72,0.98,0.20,0.16),(-1.15,1.22,0.18,0.14),(-0.55,1.48,0.16,0.12),
-    (-1.75,-0.42,0.18,0.14),(-0.52,-1.52,0.18,0.14)
-]):
-    box("V11_IC_%02d"%i,L(x,y,0.275),(sx,sy,0.035),V11_BLACK,COL_PC,0.012)
-    for p in range(4):
-        px=x-sx*0.55+p*sx*0.36
-        box("V11_IC_PIN",L(px,y-sy*0.68,0.275),(0.010,0.018,0.006),V11_SOLDER,COL_PC,0.001)
-        box("V11_IC_PIN",L(px,y+sy*0.68,0.275),(0.010,0.018,0.006),V11_SOLDER,COL_PC,0.001)
-
-# Silkscreen técnico: referencias típicas de una motherboard real.
-for i,(label,x,y) in enumerate([
-    ("CPU", -1.46,0.78),("VRM", -1.95,1.55),("RAM", -0.02,-1.52),
-    ("SATA",0.05,1.65),("LAN",-0.20,1.92),("PCH",-0.05,0.72)
-]):
-    text("V11_SILK_%02d"%i,label,L(x,y,0.292),0.055,V11_SILK,COL_PC)
-
-# Líneas de referencia y pequeños marcadores de polaridad.
-for i in range(8):
-    x=-1.98+i*0.27
-    box("V11_SILK_LINE",L(x,-0.92,0.292),(0.09,0.002,0.0015),V11_SILK,COL_PC,0.0005)
-
-# Evitar que cualquier detalle quede fuera de la motherboard.
-# Todos los objetos V11 creados arriba están dentro de sus límites.
-bpy.context.view_layer.update()
-
-# ============================================================
-# FIN V11 — motherboard físicamente creíble
-# ============================================================
-
-
-# ============================================================
-# V12 — MACRO PHOTOREAL MOTHERBOARD
-# Material multicapa + copper routing + solder + silkscreen +
-# tiny passive components + realistic PCB edge.
-# ============================================================
-
-def _v12_mat(name, base, metallic, rough, scale, bump_strength):
-    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    m.use_nodes=True
-    nt=m.node_tree; nt.nodes.clear()
-    out=nt.nodes.new("ShaderNodeOutputMaterial")
-    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
-    tc=nt.nodes.new("ShaderNodeTexCoord")
-    n=nt.nodes.new("ShaderNodeTexNoise")
-    n.inputs["Scale"].default_value=scale
-    n.inputs["Detail"].default_value=7.0
-    n.inputs["Roughness"].default_value=0.64
-    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
-    ramp=nt.nodes.new("ShaderNodeValToRGB")
-    nt.links.new(n.outputs["Fac"],ramp.inputs["Fac"])
-    ramp.color_ramp.elements[0].color=(*tuple(max(c*.78,0) for c in base),1)
-    ramp.color_ramp.elements[1].color=(*tuple(min(c*1.16,1) for c in base),1)
-    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
-    bs.inputs["Metallic"].default_value=metallic
-    bs.inputs["Roughness"].default_value=rough
-    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.18
-    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.14
-    bump=nt.nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value=bump_strength
-    bump.inputs["Distance"].default_value=0.001
-    nt.links.new(n.outputs["Fac"],bump.inputs["Height"])
-    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
-    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
-    m.diffuse_color=(*base,1)
-    return m
-
-V12_PCB=_v12_mat("V12 FR4 SOLDER MASK",(0.003,0.055,0.010),0.08,0.30,520,0.075)
-V12_CU=_v12_mat("V12 Exposed Copper",(0.48,0.055,0.012),0.98,0.18,1500,0.025)
-V12_ENIG=_v12_mat("V12 ENIG",(0.72,0.43,0.055),0.99,0.14,1800,0.018)
-V12_SOLDER=_v12_mat("V12 SAC Solder",(0.43,0.46,0.48),0.92,0.20,1300,0.035)
-V12_IC=_v12_mat("V12 IC Package",(0.002,0.003,0.005),0.08,0.24,1100,0.045)
-V12_SILK=_v12_mat("V12 White Silkscreen",(0.72,0.74,0.67),0.0,0.40,1000,0.012)
-V12_FR4_EDGE=_v12_mat("V12 FR4 Edge",(0.025,0.035,0.028),0.02,0.58,700,0.08)
-
-mb=bpy.data.objects.get("HP_MOTHERBOARD")
-if mb and mb.type=="MESH":
-    mb.data.materials.clear()
-    mb.data.materials.append(V12_PCB)
-
-# Retira únicamente la decoración V11 anterior para evitar duplicación.
-for o in list(bpy.data.objects):
-    if o.name.startswith("V11_"):
-        bpy.data.objects.remove(o,do_unlink=True)
-
-# Borde de PCB: capa muy fina que da espesor real al FR-4.
-box("V12_PCB_EDGE_FRONT",L(-1.05,-1.925,0.205),(1.34,0.010,0.025),V12_FR4_EDGE,COL_PC,0.004)
-box("V12_PCB_EDGE_BACK",L(-1.05,1.975,0.205),(1.34,0.010,0.025),V12_FR4_EDGE,COL_PC,0.004)
-box("V12_PCB_EDGE_LEFT",L(-2.385,0.025,0.205),(0.010,1.95,0.025),V12_FR4_EDGE,COL_PC,0.004)
-box("V12_PCB_EDGE_RIGHT",L(0.285,0.025,0.205),(0.010,1.95,0.025),V12_FR4_EDGE,COL_PC,0.004)
-
-# Zonas de cobre expuesto, como ocurre alrededor de pads y conectores.
-for i in range(28):
-    x=-2.18+(i%14)*0.17
-    y=-1.70+(i//14)*0.23
-    box("V12_CU_PAD_%03d"%i,L(x,y,0.222),(0.052,0.018,0.0025),V12_CU,COL_PC,0.002)
-
-# Routing realista: segmentos ortogonales y diagonales, apoyados sobre el solder mask.
-paths=[
-[(-2.22,-1.48),(-1.70,-1.48),(-1.48,-1.22),(-0.95,-1.22),(-0.72,-0.92),(-0.20,-0.92)],
-[(-2.18,-1.18),(-1.82,-1.18),(-1.60,-0.82),(-1.05,-0.82),(-0.82,-0.52),(-0.25,-0.52)],
-[(-2.12,-0.86),(-1.65,-0.86),(-1.42,-0.45),(-0.95,-0.45),(-0.70,-0.12),(-0.30,-0.12)],
-[(-2.05,-0.20),(-1.72,-0.20),(-1.45,0.12),(-0.92,0.12),(-0.68,0.42),(-0.28,0.42)],
-[(-2.12,0.42),(-1.70,0.42),(-1.45,0.72),(-0.90,0.72),(-0.68,1.04),(-0.22,1.04)],
-[(-2.08,0.92),(-1.65,0.92),(-1.42,1.22),(-0.92,1.22),(-0.65,1.50),(-0.18,1.50)],
-[(-0.12,-1.75),(0.08,-1.52),(0.08,-1.05),(0.22,-0.84),(0.22,-0.25)],
-[(-0.05,0.10),(0.12,0.30),(0.12,0.78),(0.24,0.98),(0.24,1.70)]
-]
-for pi,p in enumerate(paths):
-    for si in range(len(p)-1):
-        x1,y1=p[si]; x2,y2=p[si+1]
-        dx=x2-x1; dy=y2-y1; ln=max(math.hypot(dx,dy),0.001)
-        mid=((x1+x2)/2,(y1+y2)/2)
-        ang=math.atan2(dy,dx)
-        box("V12_CU_TRACE_%02d_%02d"%(pi,si),
-            L(mid[0],mid[1],0.224),(ln/2,0.006,0.0022),
-            V12_CU,COL_PC,0.001,rot=(0,0,ang))
-
-# Vias con anillo + agujero negro: detalle visible a distancia macro.
-for row in range(9):
-    for col in range(8):
-        x=-2.18+col*0.30+(row%2)*0.035
-        y=-1.68+row*0.40
-        if x>0.22: continue
-        cyl("V12_VIA_%02d_%02d"%(row,col),L(x,y,0.227),0.020,0.005,V12_ENIG,COL_PC,seg=24)
-        cyl("V12_VIA_HOLE_%02d_%02d"%(row,col),L(x,y,0.231),0.007,0.006,V12_IC,COL_PC,seg=16)
-
-# Componentes 0402/0603: muy pequeños y con terminales de soldadura.
-for i in range(36):
-    x=-2.08+(i%12)*0.18
-    y=-1.58+(i//12)*0.34
-    box("V12_R_BODY_%02d"%i,L(x,y,0.245),(0.038,0.014,0.012),V12_IC,COL_PC,0.003)
-    box("V12_R_A_%02d"%i,L(x-0.035,y,0.246),(0.007,0.016,0.009),V12_SOLDER,COL_PC,0.001)
-    box("V12_R_B_%02d"%i,L(x+0.035,y,0.246),(0.007,0.016,0.009),V12_SOLDER,COL_PC,0.001)
-
-# Capacitores SMD más grandes alrededor de VRM/PCH.
-for i in range(14):
-    x=-2.08+(i%7)*0.31
-    y=0.72+(i//7)*0.28
-    box("V12_CAP_%02d"%i,L(x,y,0.265),(0.065,0.040,0.030),V12_IC,COL_PC,0.009)
-    box("V12_CAP_END_A_%02d"%i,L(x-0.055,y,0.266),(0.009,0.036,0.018),V12_SOLDER,COL_PC,0.002)
-    box("V12_CAP_END_B_%02d"%i,L(x+0.055,y,0.266),(0.009,0.036,0.018),V12_SOLDER,COL_PC,0.002)
-
-# Inductores cuadrados del VRM.
-for i in range(7):
-    x=-2.05+i*0.29
-    box("V12_VRM_CHOKE_%02d"%i,L(x,1.55,0.30),(0.10,0.09,0.075),V12_IC,COL_PC,0.012)
-    text("V12_CHOKE_MARK_%02d"%i,"1R0",L(x,1.55,0.378),0.032,V12_SILK,COL_PC)
-
-# ICs principales con esquinas suaves y pines visibles.
-for i,(x,y,sx,sy) in enumerate([
-    (-0.55,0.62,0.22,0.18),(-0.52,1.18,0.18,0.14),(-1.62,-0.42,0.20,0.16)
-]):
-    box("V12_MAIN_IC_%02d"%i,L(x,y,0.292),(sx,sy,0.045),V12_IC,COL_PC,0.012)
-    for k in range(5):
-        px=x-sx*0.55+k*sx*0.275
-        box("V12_IC_PIN",L(px,y-sy*0.67,0.294),(0.009,0.020,0.005),V12_SOLDER,COL_PC,0.001)
-        box("V12_IC_PIN",L(px,y+sy*0.67,0.294),(0.009,0.020,0.005),V12_SOLDER,COL_PC,0.001)
-
-# Silkscreen fino, típico de placas reales.
-for i,(label,x,y) in enumerate([
-    ("HP", -2.18,1.78),("8200", -1.78,1.78),("REV 1.0",-1.20,1.78),
-    ("CPU",-1.42,0.70),("VRM",-1.98,1.35),("RAM",-0.04,-1.48),
-    ("SATA",0.02,1.70),("PCH",-0.52,0.38),("LAN",-0.18,1.95)
-]):
-    text("V12_SILK_%02d"%i,label,L(x,y,0.305),0.045,V12_SILK,COL_PC)
-
-# Pequeños puntos de prueba, jumpers y test pads.
-for i in range(12):
-    x=-1.82+(i%6)*0.30
-    y=0.02+(i//6)*0.20
-    cyl("V12_TEST_PAD_%02d"%i,L(x,y,0.232),0.018,0.004,V12_ENIG,COL_PC,seg=24)
-
-bpy.context.view_layer.update()
-# ============================================================
-# FIN V12
-# ============================================================
-
-
-# ============================================================
-# V13 — MAX REALISM / COLLISION-SAFE PCB / 4K + RTX 3090
-# - Elimina la decoracion V12 que podia atravesar componentes.
-# - Usa limites exactos de la motherboard original.
-# - Genera trazas/vias/pads SOLO en zonas libres.
-# - Solder mask, copper, ENIG, solder fillets y microtextura.
-# - Render final Cycles + OptiX cuando Blender lo permita.
-# ============================================================
-
-# ---- limpiar la decoracion V12 anterior ----
-for _o in list(bpy.data.objects):
-    if _o.name.startswith("V12_"):
-        bpy.data.objects.remove(_o, do_unlink=True)
-
-# ---- limites REALES de HP_MOTHERBOARD ----
-# El objeto original fue creado con:
-# centro local (-0.975, 0.05, 0.17), half-size (1.325, 1.95, 0.04)
-_MB_X0, _MB_X1 = -2.300, 0.350
-_MB_Y0, _MB_Y1 = -1.900, 2.000
-_MB_TOP = 0.210
-
-# Borde FR-4: termina exactamente en la superficie de la placa.
-box("V13_PCB_EDGE_FRONT",L((_MB_X0+_MB_X1)/2,_MB_Y0,_MB_TOP-0.020),
-    ((_MB_X1-_MB_X0)/2,0.012,0.020),V12_FR4_EDGE,COL_PC,0.002)
-box("V13_PCB_EDGE_BACK",L((_MB_X0+_MB_X1)/2,_MB_Y1,_MB_TOP-0.020),
-    ((_MB_X1-_MB_X0)/2,0.012,0.020),V12_FR4_EDGE,COL_PC,0.002)
-box("V13_PCB_EDGE_LEFT",L(_MB_X0,(_MB_Y0+_MB_Y1)/2,_MB_TOP-0.020),
-    (0.012,(_MB_Y1-_MB_Y0)/2,0.020),V12_FR4_EDGE,COL_PC,0.002)
-box("V13_PCB_EDGE_RIGHT",L(_MB_X1,(_MB_Y0+_MB_Y1)/2,_MB_TOP-0.020),
-    (0.012,(_MB_Y1-_MB_Y0)/2,0.020),V12_FR4_EDGE,COL_PC,0.002)
-
-# ---- zonas de exclusión: ningún detalle de cobre puede invadirlas ----
-# (x0,x1,y0,y1,clearance)
-_keepouts=[
-    (-2.30,-1.98,-1.75,1.75,0.08),  # bancos de capacitores/VRM
-    (-1.48,-0.52,-0.13,0.83,0.10),  # socket + CPU
-    (-0.36,0.39,-0.10,1.00,0.10),   # chipset
-    (-0.40,0.40,-1.85,-0.18,0.10),  # SO-DIMM
-    (-1.95,-1.65,-1.85,-1.25,0.07), # CMOS
-    (-1.98,-1.82,0.92,1.48,0.07),   # BIOS
-    (-0.15,0.30,-1.92,-1.55,0.08),  # IC frontal
-]
-def _v13_blocked(x,y,extra=0.0):
-    for x0,x1,y0,y1,cl in _keepouts:
-        if (x0-cl-extra)<=x<=(x1+cl+extra) and (y0-cl-extra)<=y<=(y1+cl+extra):
-            return True
-    return not (_MB_X0+0.045 <= x <= _MB_X1-0.045 and _MB_Y0+0.045 <= y <= _MB_Y1-0.045)
-
-def _v13_segment_free(a,b,extra=0.0):
-    # Muestreo denso: si un tramo toca una zona ocupada, no se crea.
-    dx=b[0]-a[0]; dy=b[1]-a[1]
-    n=max(2,int(math.hypot(dx,dy)/0.025))
-    for j in range(n+1):
-        t=j/n
-        if _v13_blocked(a[0]+dx*t,a[1]+dy*t,extra):
-            return False
-    return True
-
-# ---- microfabricacion: trazas con vias y terminaciones ----
-V13_TRACE=V12_CU
-V13_PAD=V12_ENIG
-V13_SOLDER=V12_SOLDER
-
-_trace_paths=[
-    [(-2.22,-1.82),(-1.85,-1.82),(-1.62,-1.62),(-1.25,-1.62)],
-    [(-2.20,1.82),(-1.82,1.82),(-1.58,1.58),(-1.25,1.58)],
-    [(-1.58,-1.88),(-1.35,-1.72),(-1.08,-1.72)],
-    [(-0.45,-1.82),(-0.45,-1.48),(-0.70,-1.25)],
-    [(-0.42,1.82),(-0.18,1.60),(-0.18,1.25),(0.28,1.25)],
-    [(-0.48,1.02),(-0.72,1.18),(-0.90,1.35)],
-    [(-1.58,-0.98),(-1.40,-1.12),(-1.18,-1.12)],
-    [(-1.58,0.98),(-1.40,1.10),(-1.22,1.10)],
-]
-for pi,p in enumerate(_trace_paths):
-    for si in range(len(p)-1):
-        a,b=p[si],p[si+1]
-        if not _v13_segment_free(a,b,0.01): continue
-        dx=b[0]-a[0]; dy=b[1]-a[1]
-        ln=math.hypot(dx,dy)
-        ang=math.atan2(dy,dx)
-        box("V13_CU_TRACE_%02d_%02d"%(pi,si),
-            L((a[0]+b[0])/2,(a[1]+b[1])/2,0.216),
-            (ln/2,0.0048,0.0018),V13_TRACE,COL_PC,0.001,rot=(0,0,ang))
-
-# Pads y vias solamente en regiones libres.
-for row in range(6):
-    for col in range(8):
-        x=-1.86+col*0.26+(row%2)*0.035
-        y=-1.70+row*0.42
-        if not _v13_blocked(x,y,0.015):
-            box("V13_ENIG_PAD_%02d_%02d"%(row,col),L(x,y,0.217),
-                (0.030,0.014,0.0022),V13_PAD,COL_PC,0.0015)
-
-for row in range(6):
-    for col in range(7):
-        x=-1.82+col*0.28+(row%2)*0.03
-        y=0.90+row*0.16
-        if not _v13_blocked(x,y,0.015):
-            cyl("V13_VIA_RING_%02d_%02d"%(row,col),L(x,y,0.219),0.016,0.0035,V13_PAD,COL_PC,seg=20)
-            cyl("V13_VIA_HOLE_%02d_%02d"%(row,col),L(x,y,0.223),0.006,0.004,V12_IC,COL_PC,seg=16)
-
-# ---- SMDs libres: cuerpo + terminal + fillet de soldadura ----
-_smd_sites=[(-1.78,-1.42),(-1.52,-1.42),(-1.26,-1.42),(-0.92,-1.72),
-            (-0.66,-1.72),(0.18,1.55),(0.18,1.75),(-1.72,1.42),
-            (-1.45,1.42),(-1.18,1.42)]
-for i,(x,y) in enumerate(_smd_sites):
-    if _v13_blocked(x,y,0.06): continue
-    box("V13_SMD_BODY_%02d"%i,L(x,y,0.247),(0.038,0.015,0.012),V12_IC,COL_PC,0.003)
-    box("V13_SMD_TERM_A_%02d"%i,L(x-0.038,y,0.248),(0.009,0.016,0.008),V13_SOLDER,COL_PC,0.0015)
-    box("V13_SMD_TERM_B_%02d"%i,L(x+0.038,y,0.248),(0.009,0.016,0.008),V13_SOLDER,COL_PC,0.0015)
-    sphere("V13_SOLDER_FILLET_A_%02d"%i,L(x-0.041,y,0.250),0.010,V13_SOLDER,COL_PC,scale=(1.5,1.0,0.55))
-    sphere("V13_SOLDER_FILLET_B_%02d"%i,L(x+0.041,y,0.250),0.010,V13_SOLDER,COL_PC,scale=(1.5,1.0,0.55))
-
-# ---- silkscreen microscópico ----
-for i,(label,x,y) in enumerate([
-    ("HP",-2.18,1.76),("8200",-1.78,1.76),("REV 1.0",-1.18,1.76),
-    ("CPU",-1.38,0.88),("VRM",-1.88,1.72),("RAM",0.03,-1.52),
-    ("SATA",0.02,1.82),("PCH",-0.48,0.38)
-]):
-    if not _v13_blocked(x,y,0.02):
-        text("V13_SILK_%02d"%i,label,L(x,y,0.226),0.038,V12_SILK,COL_PC)
-
-# ---- acabado PCB: microimperfecciones de fabricacion, no suciedad ----
-# Una película ultrafina evita el aspecto CGI perfectamente uniforme.
-V13_PCB_REAL=_v12_mat("V13 FR4 Photoreal",(0.0025,0.040,0.007),0.05,0.31,900,0.045)
-if mb and mb.type=="MESH":
-    mb.data.materials.clear()
-    mb.data.materials.append(V13_PCB_REAL)
-
-# ---- Render de máxima calidad ----
-final=True
-try:
-    scene.render.engine="BLENDER_EEVEE_NEXT"
-except Exception:
-    pass
-
-# RTX 3090: Cycles + OptiX para el render FINAL.
-try:
-    import bpy
-    prefs=bpy.context.preferences
-    cprefs=prefs.addons["cycles"].preferences
-    cprefs.compute_device_type="OPTIX"
-    for dev in cprefs.devices:
-        dev.use=True
-    scene.cycles.device="GPU"
-    scene.render.engine="CYCLES"
-    scene.cycles.samples=512
-    scene.cycles.use_denoising=True
-    try: scene.cycles.preview_samples=64
-    except Exception: pass
-    try: scene.cycles.max_bounces=10
-    except Exception: pass
-    try: scene.cycles.diffuse_bounces=4
-    except Exception: pass
-    try: scene.cycles.glossy_bounces=6
-    except Exception: pass
-    try: scene.cycles.transmission_bounces=8
-    except Exception: pass
-    try: scene.cycles.transparent_max_bounces=8
-    except Exception: pass
-except Exception as e:
-    print("OptiX/Cycles no disponible; se conserva EEVEE NEXT:",e)
-
-# Sombras/reflejos: alta resolución, transparencias y contacto.
-try:
-    scene.render.resolution_x=3840
-    scene.render.resolution_y=2160
-    scene.render.resolution_percentage=100
-    scene.render.image_settings.file_format="PNG"
-    scene.render.film_transparent=False
-except Exception:
-    pass
-
-try:
-    # DOF sutil para la cámara hero, manteniendo el laboratorio legible.
-    cam=bpy.data.objects.get("CAMERA_HERO_PC")
-    if cam:
-        cam.data.dof.use_dof=True
-        cam.data.dof.focus_object=bpy.data.objects.get("HP_MOTHERBOARD") or bpy.data.objects.get("HP_CPU")
-        cam.data.dof.aperture_fstop=7.1
-except Exception:
-    pass
-
-bpy.context.view_layer.update()
-
-# ============================================================
-# FIN V13
-# ============================================================
-
-
-# ============================================================
-# 10. LUCES (calibradas para NO quemar la imagen)
-# ============================================================
-
-area_light("KEY_LIGHT", (-4, -8, 7.2), 1100, 6, (0.80, 0.90, 1.0), (0, 0, 2.5))
-area_light("FILL_LIGHT", (9, -2, 6), 650, 5, (0.20, 0.40, 1.0), (0, 0, 3))
-area_light("BACK_LIGHT", (0, 3.5, 7.0), 900, 5, (0.10, 0.55, 1.0), (0, 7.2, 1.8))
-area_light("HERO_KEY", (4, -1.5, 6.0), 1500, 3.5, (0.85, 0.92, 1.0), L(0, 0, 0.8))
-area_light("HERO_TOP", L(0, -0.8, 4.2), 900, 2.5, (0.95, 0.97, 1.0), L(0, 0.3, 0.2))
-area_light("HERO_RIM", (-6, 4.0, 5.0), 800, 3, (0.10, 0.30, 1.0), L(0, 0, 1.0))
-area_light("ACCENT_AMBER", (12.5, -3, 5.0), 500, 4, (1.0, 0.45, 0.10), (7, -4, 1.5))
-area_light("ACCENT_VIOLET", (0, 9.4, 3.5), 450, 4, (0.55, 0.15, 1.0), (0, 5.0, 0.5))
-area_light("ACCENT_TEAL", (-12.5, -2, 5.0), 450, 4, (0.0, 0.8, 0.8), (-7, -4, 1.5))
-for cy_ in (-6, 0, 6):
-    area_light("CEILING_PRACTICAL", (0, cy_, 7.5), 250, 3, (0.55, 0.85, 1.0), (0, cy_, 0))
-for px, py in ((-12, 7), (-9, 7), (9, 7), (12, 7)):
-    point_light("SERVER_PRACTICAL", (px, py, 3.5), 65, (0.0, 0.25, 1.0))
-
-
-# ============================================================
-# 11. CAMARAS
-# ============================================================
-
-def static_camera(name, loc, target, lens):
-    d = bpy.data.cameras.new(name)
-    d.lens = lens
-    o = add_obj(name, d, loc, (0, 0, 0), COL_CAMERA)
-    point_at(o, target)
-    return o
-
-
-static_camera("CAMERA_MASTER", (17.5, -18.5, 8.5), (0, 0, 3), 28)
-static_camera("CAMERA_HERO_PC", (4.5, 1.5, 4.6), L(-0.5, 0, 0.6), 40)
-static_camera("CAMERA_WIDE", (0, -20, 8), (0, 1.5, 3.5), 24)
-
-scene.camera = bpy.data.objects.get("CAMERA_MASTER") or bpy.data.objects.get("CAMERA_WIDE")
-
-
-# ============================================================
-# 12. MUNDO, RENDER, COLOR Y GLOW
-# ============================================================
-
-world = scene.world or bpy.data.worlds.new("LAB_WORLD")
-scene.world = world
-try:
-    world.use_nodes = True
-    bg = world.node_tree.nodes.get("Background")
-    if bg:
-        bg.inputs["Color"].default_value = (0.004, 0.009, 0.020, 1)
-        bg.inputs["Strength"].default_value = 0.35
-except Exception as e:
-    print("World:", e)
-
-for engine in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
-    try:
-        scene.render.engine = engine
-        break
-    except Exception:
-        continue
-
-ev = scene.eevee
-final = (QUALITY == "FINAL")
-for attr, val in (("use_raytracing", True),
-                  ("taa_render_samples", 128 if final else 32),
-                  ("taa_samples", 16),
-                  ("shadow_ray_count", 3 if final else 2),
-                  ("shadow_step_count", 8 if final else 4)):
-    try:
-        setattr(ev, attr, val)
-    except Exception:
-        pass
-try:
-    ev.ray_tracing_options.resolution_scale = "1" if final else "2"
-except Exception:
-    pass
-
-scene.render.resolution_x = 3840
-scene.render.resolution_y = 2160
-scene.render.resolution_percentage = 100
-scene.render.image_settings.file_format = "PNG"
-try:
-    scene.render.image_settings.color_mode = "RGBA"
-except Exception:
-    pass
-scene.frame_start = 1
-scene.frame_end = 1
-
-vs = scene.view_settings
-try:
-    vs.view_transform = VIEW_TRANSFORM
-except Exception:
-    pass
-if VIEW_TRANSFORM == "AgX":
-    for look in ("AgX - Punchy", "Punchy", "AgX - Medium High Contrast", "Medium High Contrast"):
-        try:
-            vs.look = look
-            break
-        except Exception:
-            continue
-try:
-    vs.exposure = EXPOSURE
-    vs.gamma = 1.0
-except Exception:
-    pass
-
-
-def try_set(fn):
-    try:
-        fn()
-        return True
-    except Exception:
-        return False
-
-
-def setup_glow():
-    """Glow suave y opcional. Si la API del compositor falla, el resto de la escena sigue igual."""
-    try:
-        if hasattr(scene, "compositing_node_group"):
-            tree = bpy.data.node_groups.new("LAB_COMPOSITOR", "CompositorNodeTree")
-            scene.compositing_node_group = tree
-            tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
-            out = tree.nodes.new("NodeGroupOutput")
-        else:
-            scene.use_nodes = True
-            tree = scene.node_tree
-            tree.nodes.clear()
-            out = tree.nodes.new("CompositorNodeComposite")
-        rl = tree.nodes.new("CompositorNodeRLayers")
-        gl = tree.nodes.new("CompositorNodeGlare")
-        ok = try_set(lambda: setattr(gl, "glare_type", "FOG_GLOW")) or \
-            try_set(lambda: setattr(gl.inputs["Type"], "default_value", "Fog Glow"))
-        if ok:
-            try_set(lambda: setattr(gl, "threshold", 1.2))
-            try_set(lambda: setattr(gl, "mix", -0.85))                       # Blender 4.x
-            try_set(lambda: setattr(gl.inputs["Strength"], "default_value", 0.25))   # Blender 5.x
-            try_set(lambda: setattr(gl.inputs["Threshold"], "default_value", 1.2))
-            tree.links.new(rl.outputs[0], gl.inputs[0])
-            tree.links.new(gl.outputs[0], out.inputs[0])
-        else:
-            tree.nodes.remove(gl)
-            tree.links.new(rl.outputs[0], out.inputs[0])
-            print("Glow: no se pudo configurar el nodo Glare (opcional).")
-    except Exception as e:
-        print("Glow no aplicado (es opcional):", e)
-
-
-setup_glow()
-
-
-
-# ============================================================
-# V14 — REAL PHOTOREALISM / PHYSICAL MATERIALS / CAMERA / LIGHT
-# Objetivo: que la escena parezca una fotografía de un laboratorio
-# real y no una escena 3D limpia.
-# ============================================================
-
-# ---- 1) Microdetalle PBR: variación de roughness + micro-normal ----
-def _v14_microfinish(mat_obj, scale=420.0, strength=0.035, rough_var=0.055):
-    if not mat_obj or not getattr(mat_obj, "use_nodes", False):
+# 16. CONTROLLED PBR + CINEMATIC LIGHTING PASS
+# Primera capa de hiperrealismo: SOLO materiales y luz.
+# No crea ni mueve geometria. No agrega decoracion.
+
+def _pbr_set(mat_name, metallic=None, rough=None, base=None, coat=None, coat_rough=None,
+             transmission=None, ior=None, specular=None):
+    m=bpy.data.materials.get(mat_name)
+    if not m or not m.use_nodes:
         return
-    nt = mat_obj.node_tree
-    bs = nt.nodes.get("Principled BSDF")
-    tc = nt.nodes.get("Texture Coordinate")
+    bs=m.node_tree.nodes.get("Principled BSDF")
     if not bs:
         return
-    # Evitar duplicar el acabado si el script se ejecuta dos veces.
-    if nt.nodes.get("V14_MICRO_FINISH"):
+    def put(k,v):
+        if k in bs.inputs and v is not None:
+            bs.inputs[k].default_value=v
+    if base is not None: put("Base Color", (*base,1.0))
+    if metallic is not None: put("Metallic", metallic)
+    if rough is not None: put("Roughness", rough)
+    if coat is not None: put("Coat Weight", coat)
+    if coat_rough is not None: put("Coat Roughness", coat_rough)
+    if transmission is not None: put("Transmission Weight", transmission)
+    if ior is not None: put("IOR", ior)
+    if specular is not None:
+        put("Specular IOR Level", specular)
+        put("Specular", specular)
+
+# --- METAL REALISTA ---
+# Metal real: metallic=1, color moderado, roughness variable por microtextura.
+_pbr_set("Steel", metallic=1.0, rough=0.26, coat=0.18, coat_rough=0.08)
+_pbr_set("Aluminum", metallic=1.0, rough=0.23, coat=0.12, coat_rough=0.08)
+_pbr_set("Copper", metallic=1.0, rough=0.25)
+_pbr_set("Gold", metallic=1.0, rough=0.20)
+_pbr_set("Perforated Metal", metallic=1.0, rough=0.30)
+_pbr_set("Anodized Black", metallic=0.88, rough=0.28, coat=0.20, coat_rough=0.10)
+
+# --- PLASTICO ---
+# Plástico técnico: no es metal; reflejo suave y micrograno.
+for _n,_r,_c in (
+    ("HP Black Plastic",0.34,0.28),
+    ("Plastic Black",0.38,0.24),
+    ("Plastic White",0.32,0.25),
+    ("Plastic Red",0.34,0.22),
+    ("Plastic Blue",0.34,0.22),
+    ("Plastic Yellow",0.34,0.22),
+    ("Plastic Orange",0.34,0.22),
+    ("Plastic Green",0.34,0.22),
+    ("Plastic Violet",0.34,0.22),
+    ("Keyboard Keys",0.42,0.16),
+):
+    _pbr_set(_n, metallic=0.0, rough=_r, coat=_c, coat_rough=0.12)
+
+# --- VIDRIO ---
+# Vidrio físicamente plausible: transmisión completa + IOR realista.
+_pbr_set("Glass", metallic=0.0, rough=0.018, transmission=1.0, ior=1.45,
+         coat=0.10, coat_rough=0.035)
+
+# --- PINTURA / PANEL ---
+# Pintura industrial semimate: no debe comportarse como espejo.
+_pbr_set("Wall Panel Side", metallic=0.0, rough=0.32, coat=0.30, coat_rough=0.10)
+_pbr_set("Wall Panel Back", metallic=0.0, rough=0.32, coat=0.30, coat_rough=0.10)
+_pbr_set("Ceiling Panel", metallic=0.0, rough=0.38, coat=0.22, coat_rough=0.12)
+_pbr_set("Floor", metallic=0.0, rough=0.16, coat=0.28, coat_rough=0.10)
+_pbr_set("Floor Tile", metallic=0.35, rough=0.20, coat=0.25, coat_rough=0.10)
+
+# --- CAUCHO ---
+_pbr_set("Rubber", metallic=0.0, rough=0.78, coat=0.04, coat_rough=0.18)
+_pbr_set("Dust", metallic=0.0, rough=0.92)
+
+# --- SUPERFICIES DE PC ---
+# Chasis, paneles y componentes: reflejos controlados, sin convertirlos en cromo.
+_pbr_set("HP Black Plastic", base=(0.010,0.012,0.016), rough=0.34, coat=0.30, coat_rough=0.11)
+_pbr_set("PCB", base=(0.006,0.055,0.018), metallic=0.0, rough=0.31)
+_pbr_set("Paste New", metallic=0.0, rough=0.30, coat=0.08)
+_pbr_set("Paste Dry", metallic=0.0, rough=0.88)
+
+# --- ILUMINACION CINEMATOGRAFICA ---
+# Mantener posiciones existentes; solo calibrar energia, tamaño y color.
+def _light_tune(name, energy=None, size=None, color=None):
+    o=bpy.data.objects.get(name)
+    if not o or o.type!="LIGHT":
         return
-    tex = nt.nodes.new("ShaderNodeTexNoise")
-    tex.name = "V14_MICRO_FINISH"
-    tex.label = "V14 micro surface"
-    tex.inputs["Scale"].default_value = scale
-    tex.inputs["Detail"].default_value = 3.0
-    tex.inputs["Roughness"].default_value = 0.62
-    if tc:
-        nt.links.new(tc.outputs["Object"], tex.inputs["Vector"])
-    else:
-        tc = nt.nodes.new("ShaderNodeTexCoord")
-        nt.links.new(tc.outputs["Object"], tex.inputs["Vector"])
-
-    bump = nt.nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value = strength
-    bump.inputs["Distance"].default_value = 0.006
-    nt.links.new(tex.outputs["Fac"], bump.inputs["Height"])
-    nt.links.new(bump.outputs["Normal"], bs.inputs["Normal"])
-
-    # Roughness ligeramente irregular, nunca perfectamente uniforme.
-    ramp = nt.nodes.new("ShaderNodeValToRGB")
-    ramp.name = "V14_ROUGHNESS_VARIATION"
-    ramp.color_ramp.elements[0].position = 0.32
-    ramp.color_ramp.elements[0].color = (max(0.02, rough_var * -0.25 + 0.42),)*3+(1.0,)
-    ramp.color_ramp.elements[1].position = 0.68
-    ramp.color_ramp.elements[1].color = (min(1.0, 0.42 + rough_var),)*3+(1.0,)
-    nt.links.new(tex.outputs["Fac"], ramp.inputs["Fac"])
+    if energy is not None:
+        o.data.energy=energy*LIGHT_SCALE
+    if size is not None and hasattr(o.data,"shape") and o.data.type=="AREA":
+        o.data.size=size
+    if color is not None:
+        o.data.color=color
     try:
-        nt.links.new(ramp.outputs["Color"], bs.inputs["Roughness"])
+        o.data.use_shadow=True
     except Exception:
         pass
 
-# Acabado conservador: no destruir el carácter de pantallas/neones.
-_v14_skip = {"Screen","Screen Big","Screen HUD","LCD","LED Cyan","LED Blue","LED Green",
-             "LED Red","LED Amber","LED Violet","Label White"}
-for _m in list(bpy.data.materials):
-    if _m.name in _v14_skip:
-        continue
-    if _m.use_nodes and _m.node_tree.nodes.get("Principled BSDF"):
-        _base = _m.node_tree.nodes.get("Principled BSDF").inputs.get("Metallic")
-        _metal = float(_base.default_value) if _base else 0.0
-        _v14_microfinish(_m, 650 if _metal > 0.5 else 520,
-                         0.022 if _metal > 0.5 else 0.032,
-                         0.075 if _metal > 0.5 else 0.055)
+# KEY: fuente grande y neutra = volumen y sombras suaves.
+_light_tune("KEY_LIGHT", 1250, 6.5, (1.0,0.97,0.92))
+# FILL: mucho mas debil que la key para conservar contraste.
+_light_tune("FILL_LIGHT", 360, 7.0, (0.62,0.74,1.0))
+# BACK/RIM: separacion del sujeto respecto al fondo.
+_light_tune("BACK_LIGHT", 650, 5.0, (0.35,0.58,1.0))
+_light_tune("HERO_KEY", 1450, 3.8, (1.0,0.98,0.94))
+_light_tune("HERO_TOP", 800, 3.0, (1.0,0.97,0.91))
+_light_tune("HERO_RIM", 520, 4.0, (0.32,0.55,1.0))
 
-# ---- 2) Bevel físico: ningún gabinete importante tiene aristas matemáticas ----
-def _v14_bevel(o):
-    if o.type != "MESH" or o.name.startswith("V14_"):
-        return
-    if o.get("V14_BEVEL"):
-        return
-    try:
-        dims = [abs(float(x)) for x in o.dimensions]
-        mn = min(dims)
-        mx = max(dims)
-        if mn <= 0.0005 or mx > 25.0:
-            return
-        # No deformar detalles microscópicos ni superficies gigantes.
-        if mn < 0.003:
-            return
-        width = min(max(mn * 0.045, 0.0008), 0.028)
-        if mx > 8.0:
-            width = min(width, 0.035)
-        mod = o.modifiers.new("V14_REAL_EDGE_BEVEL", "BEVEL")
-        mod.width = width
-        mod.segments = 3
-        mod.limit_method = "ANGLE"
-        mod.angle_limit = math.radians(20.0)
-        try:
-            mod.harden_normals = True
-        except Exception:
-            pass
-        o["V14_BEVEL"] = True
-    except Exception:
-        pass
+# Acentos: solo para reflejos de color, no para iluminar toda la escena.
+_light_tune("ACCENT_AMBER", 140, 4.0, (1.0,0.48,0.18))
+_light_tune("ACCENT_VIOLET", 100, 4.0, (0.58,0.30,1.0))
+_light_tune("ACCENT_TEAL", 120, 4.0, (0.12,0.72,0.78))
 
-for _o in list(scene.objects):
-    _v14_bevel(_o)
-
-# ---- 3) Contacto y escala física de la escena ----
-# Sombras de contacto: reforzar solo luces que soportan el efecto.
+# Luz de techo: uniforme, suave y blanca; evita el look "neon everywhere".
 for _o in scene.objects:
-    if _o.type == "LIGHT":
-        try:
-            _o.data.use_shadow = True
-        except Exception:
-            pass
-
-# ---- 4) Iluminación fotográfica: neutralizar el exceso de cian ----
-# Los acentos siguen existiendo, pero la luz principal pasa a ser blanca/neutra.
-_v14_lights = {
-    "KEY_LIGHT": (1350.0, (0.93,0.96,1.0)),
-    "FILL_LIGHT": (500.0, (0.72,0.82,1.0)),
-    "HERO_KEY": (1750.0, (0.98,0.99,1.0)),
-    "HERO_TOP": (1050.0, (1.0,0.98,0.94)),
-    "HERO_RIM": (650.0, (0.34,0.55,1.0)),
-    "ACCENT_AMBER": (280.0, (1.0,0.62,0.30)),
-    "ACCENT_VIOLET": (180.0, (0.72,0.45,1.0)),
-    "ACCENT_TEAL": (220.0, (0.30,0.85,0.85)),
-}
-for _name, (_energy, _color) in _v14_lights.items():
-    _lo = bpy.data.objects.get(_name)
-    if _lo and _lo.type == "LIGHT":
-        _lo.data.energy = _energy * LIGHT_SCALE
-        _lo.data.color = _color
-
-# Softbox adicional: gran fuente = sombras fotográficas suaves.
-try:
-    area_light("V14_SOFTBOX", (-3.5,-6.5,7.8), 900*LIGHT_SCALE, 5.5,
-               (1.0,0.98,0.95), L(-0.5,0,1.0))
-    area_light("V14_RIM_SOFT", (5.5,3.5,6.5), 600*LIGHT_SCALE, 4.0,
-               (0.55,0.72,1.0), L(-0.2,0.2,1.2))
-except Exception as e:
-    print("V14 softboxes:", e)
-
-# ---- 5) Realismo de vidrio: menos plástico, más transmisión/reflexión ----
-for _name in ("Glass", "Screen", "Screen Big", "Screen HUD"):
-    _m = bpy.data.materials.get(_name)
-    if not _m or not _m.use_nodes:
-        continue
-    _bs = _m.node_tree.nodes.get("Principled BSDF")
-    if not _bs:
-        continue
-    try:
-        if _name == "Glass":
-            _bs.inputs["Roughness"].default_value = 0.025
-            if "IOR" in _bs.inputs: _bs.inputs["IOR"].default_value = 1.45
-            if "Coat Weight" in _bs.inputs: _bs.inputs["Coat Weight"].default_value = 0.25
-            if "Coat Roughness" in _bs.inputs: _bs.inputs["Coat Roughness"].default_value = 0.05
-    except Exception:
-        pass
-
-# ---- 6) Cámara fotográfica real ----
-def _v14_camera(name, lens, fstop, focus_name):
-    cam = bpy.data.objects.get(name)
-    if not cam or cam.type != "CAMERA":
-        return
-    cam.data.lens = lens
-    cam.data.sensor_width = 36.0
-    cam.data.dof.use_dof = True
-    cam.data.dof.aperture_fstop = fstop
-    focus = bpy.data.objects.get(focus_name)
-    if focus:
-        cam.data.dof.focus_object = focus
-
-_v14_camera("CAMERA_MASTER", 32.0, 10.0, "HP_PC_FLOOR")
-_v14_camera("CAMERA_HERO_PC", 52.0, 5.6, "HP_MOTHERBOARD")
-_v14_camera("CAMERA_WIDE", 28.0, 11.0, "HP_PC_FLOOR")
-
-# ---- 7) Color science: contraste cinematográfico sin quemar neones ----
-try:
-    scene.view_settings.view_transform = "AgX"
-except Exception:
-    pass
-try:
-    for _look in ("AgX - Medium High Contrast", "Medium High Contrast", "AgX - Punchy", "Punchy"):
-        try:
-            scene.view_settings.look = _look
-            break
-        except Exception:
-            continue
-except Exception:
-    pass
-try:
-    scene.view_settings.exposure = -0.35
-    scene.view_settings.gamma = 1.0
-except Exception:
-    pass
-
-# ---- 8) Render final REAL: Cycles + RTX/OptiX ----
-try:
-    cprefs = bpy.context.preferences.addons["cycles"].preferences
-    cprefs.compute_device_type = "OPTIX"
-    for _dev in cprefs.devices:
-        _dev.use = True
-    scene.render.engine = "CYCLES"
-    scene.cycles.device = "GPU"
-    scene.cycles.samples = 768
-    scene.cycles.use_denoising = True
-    scene.cycles.max_bounces = 12
-    scene.cycles.diffuse_bounces = 5
-    scene.cycles.glossy_bounces = 7
-    scene.cycles.transmission_bounces = 8
-    scene.cycles.transparent_max_bounces = 8
-    try:
-        scene.cycles.use_adaptive_sampling = True
-    except Exception:
-        pass
-except Exception as e:
-    print("V14: OptiX no disponible; se mantiene el motor compatible:", e)
-
-# 4K real, sin compresión JPEG.
-scene.render.resolution_x = 3840
-scene.render.resolution_y = 2160
-scene.render.resolution_percentage = 100
-scene.render.image_settings.file_format = "PNG"
-
-# ---- 9) Evitar que el compositor convierta el realismo en "glow de videojuego" ----
-try:
-    if scene.node_tree:
-        for _n in scene.node_tree.nodes:
-            if _n.bl_idname == "CompositorNodeGlare":
-                try:
-                    _n.threshold = 2.5
-                except Exception:
-                    pass
-                try:
-                    _n.mix = -0.92
-                except Exception:
-                    pass
-except Exception:
-    pass
-
-bpy.context.view_layer.update()
-
-# ============================================================
-# FIN V14
-# ============================================================
-
-# ============================================================
-# 13. ESCENA ESTATICA
-# ============================================================
-
-scene.timeline_markers.clear()
-scene.frame_start = 1
-scene.frame_end = 1
-scene.frame_set(1)
-# ============================================================
-# 14. VALIDACION
-
-# ============================================================
-
-print("")
-print("=" * 60)
-print(" IT SUPPORT - THE LAB V7 STATIC  |  Blender", bpy.app.version_string)
-print("=" * 60)
-underground = [o.name for o in scene.objects if o.type == "MESH" and o.location.z < -0.5]
-print("Objetos bajo el piso:", underground if underground else "ninguno")
-required = ["HP_PC_FLOOR", "HP_MOTHERBOARD", "HP_CPU", "HP_COOLER_PLATE", "HP_SODIMM_4GB",
-            "HP_STORAGE_2_5", "HP_ODD", "HP_LID", "HP_FAN_ROTOR", "HP_LID_HINGE"]
-for n in required:
-    print("   %-18s %s" % (n, "OK" if bpy.data.objects.get(n) else "FALTA"))
-print("Objetos en escena:", len(scene.objects), "| motas de polvo:", len(dust_items))
-print("Calidad:", QUALITY, "| exposicion:", EXPOSURE, "| escala de luces:", LIGHT_SCALE)
-print("Camara activa:", scene.camera.name if scene.camera else "NINGUNA")
-print("Animacion: DESACTIVADA | frame unico:", scene.frame_start, "-", scene.frame_end)
-
-
-# ============================================================
-# 15. GUARDADO (solo si el .blend ya esta guardado)
-# ============================================================
-
-try:
-    if bpy.data.is_saved:
-        out_path = os.path.join(os.path.dirname(bpy.data.filepath), "IT_SUPPORT_THE_LAB_V7_STATIC.blend")
-        bpy.ops.wm.save_as_mainfile(filepath=out_path, copy=True)
-        print("Copia guardada en:", out_path)
-    else:
-        print("Aviso: guarda tu .blend (Ctrl+S) para conservar la escena.")
-except Exception as e:
-    print("No se pudo guardar copia:", e)
-
-print("LISTO. V7 STATIC: cambia el viewport a Rendered y usa CAMERA_MASTER / CAMERA_WIDE.")
-
-# ============================================================
-# CLEAN MASTER — SAFE SCENE INTEGRITY
-# Proven V14 geometry only. No floating decorative geometry.
-# ============================================================
-scene.frame_start=1
-scene.frame_end=1
-scene.frame_set(1)
-
-def _clean_bbox(o):
-    try:
-        pts=[o.matrix_world @ Vector(c) for c in o.bound_box]
-        return min(p.x for p in pts),max(p.x for p in pts),min(p.y for p in pts),max(p.y for p in pts),min(p.z for p in pts),max(p.z for p in pts)
-    except Exception:
-        return None
-
-for o in scene.objects:
-    if o.type!="MESH": continue
-    b=_clean_bbox(o)
-    if b and (b[1] < -16 or b[0] > 16 or b[3] < -11 or b[2] > 12 or b[5] < -1):
-        o.hide_render=True
-        o.hide_viewport=True
-
-# Remove stale V15+ objects if this script is run over an existing .blend.
-for o in list(scene.objects):
-    if o.name.startswith(("V15_","V16_","V17_","V18_","V19_","V20_","V21_","V22_","V23_","V24_","V25_","V26_","V27_","V28_","V29_","V30_","V31_")):
-        try: bpy.data.objects.remove(o,do_unlink=True)
+    if _o.type=="LIGHT" and _o.name.startswith("CEILING_PRACTICAL"):
+        _o.data.energy=170*LIGHT_SCALE
+        _o.data.color=(0.88,0.94,1.0)
+        if _o.data.type=="AREA":
+            _o.data.shape="DISK"
+            _o.data.size=3.2
+        try: _o.data.use_shadow=True
         except Exception: pass
 
-for nm in ("CAMERA_MASTER","CAMERA_WIDE","CAMERA_HERO_PC"):
-    cam=bpy.data.objects.get(nm)
-    if cam and cam.type=="CAMERA":
-        cam.hide_render=False
-        cam.hide_viewport=False
-if bpy.data.objects.get("CAMERA_MASTER"):
-    scene.camera=bpy.data.objects["CAMERA_MASTER"]
+# Luces de servidores: muy discretas.
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("SERVER_PRACTICAL"):
+        _o.data.energy=30*LIGHT_SCALE
+        _o.data.color=(0.12,0.35,1.0)
 
-hp=[o for o in scene.objects if o.type=="MESH" and o.name.startswith("HP_")]
-bad=[o.name for o in hp if (lambda b: b and b[5] < -0.02)(_clean_bbox(o))]
+# Softboxes V14 ya existentes: ajustar, no crear nuevos.
+_light_tune("V14_SOFTBOX", 700, 5.8, (1.0,0.98,0.95))
+_light_tune("V14_RIM_SOFT", 420, 4.5, (0.42,0.62,1.0))
+
+# Reflexiones controladas: mundo oscuro, pero no negro absoluto.
+try:
+    bg=scene.world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Color"].default_value=(0.006,0.010,0.018,1)
+        bg.inputs["Strength"].default_value=0.22
+except Exception:
+    pass
+
+# Mantener el look fotografico y evitar clipping de luces.
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.exposure=-0.25
+except Exception:
+    pass
+
 print("="*70)
-print("CLEAN MASTER")
-print("HP parts below floor:",bad if bad else "none")
-print("Scene objects:",len(scene.objects))
-print("Active camera:",scene.camera.name if scene.camera else "NONE")
+print("PBR + CINEMATIC LIGHTING PASS 01")
+print("Materiales refinados: metal / plastico / vidrio / pintura / caucho / PC")
+print("Iluminacion: key / fill / back / hero / techo / reflejos controlados")
+print("Geometria modificada: NO")
 print("="*70)
 # ============================================================
-# END CLEAN MASTER
+# FIN PASS 01
 # ============================================================
