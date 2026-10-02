@@ -2946,7 +2946,7 @@ def _v15_make_camera(name, loc, target, lens, fstop):
     camd.lens=lens
     camd.sensor_width=36.0
     camd.dof.use_dof=True
-    camd.data.dof.aperture_fstop=fstop
+    camd.dof.aperture_fstop=fstop
     return cam
 
 _cam = _v15_make_camera("V15_CAMERA_MACRO_PC",(1.15,-1.15,2.15),(-0.95,0.15,0.48),85.0,2.8)
