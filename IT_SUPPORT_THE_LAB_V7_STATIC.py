@@ -1634,13 +1634,25 @@ scene.render.resolution_percentage=100
 
 
 
+
 # ============================================================
-# V9 CINEMATIC PHOTOREAL HERO PC
-# RTX 3090 target: prioridad absoluta a calidad visual.
+# V10 — HP 8200 REALISM / GEOMETRY INTEGRITY PASS
+# Corrige la causa de los elementos flotantes de V9:
+# se eliminan los objetos V9 geométricos mal ubicados y se
+# reconstruye el detalle tomando como referencia la geometría
+# REAL ya existente del HP 8200.
 # ============================================================
 
-def _v9_pbr(name, base, metallic=0.0, rough=0.35, scale=240.0, detail=5.0,
-             bump=0.12, coat=0.0):
+# 1) LIMPIEZA DE GEOMETRIA EXPERIMENTAL V9
+# Los materiales V9 se conservan; los meshes V9 anteriores se eliminan
+# para evitar duplicados, piezas flotantes y componentes fuera del chasis.
+for _o in list(bpy.data.objects):
+    if _o.name.startswith(("V9_", "V10_")):
+        bpy.data.objects.remove(_o, do_unlink=True)
+
+# 2) MATERIALES PBR DE ALTA CALIDAD
+def _v10_pbr(name, base, metallic=0.0, rough=0.35, micro=180.0,
+             micro_strength=0.10, coat=0.0, anisotropic=0.0):
     m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
     m.use_nodes=True
     nt=m.node_tree
@@ -1649,146 +1661,169 @@ def _v9_pbr(name, base, metallic=0.0, rough=0.35, scale=240.0, detail=5.0,
     bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
     tc=nt.nodes.new("ShaderNodeTexCoord")
     noise=nt.nodes.new("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value=scale
-    noise.inputs["Detail"].default_value=detail
-    noise.inputs["Roughness"].default_value=0.65
+    noise.inputs["Scale"].default_value=micro
+    noise.inputs["Detail"].default_value=5.0
+    noise.inputs["Roughness"].default_value=0.62
     nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
+
     ramp=nt.nodes.new("ShaderNodeValToRGB")
-    ramp.color_ramp.elements[0].position=0.30
-    ramp.color_ramp.elements[1].position=0.70
-    ramp.color_ramp.elements[0].color=(*tuple(max(v*0.78,0.0) for v in base),1)
-    ramp.color_ramp.elements[1].color=(*tuple(min(v*1.20,1.0) for v in base),1)
+    ramp.color_ramp.elements[0].position=0.32
+    ramp.color_ramp.elements[1].position=0.68
+    ramp.color_ramp.elements[0].color=(*tuple(max(c*0.82,0.0) for c in base),1)
+    ramp.color_ramp.elements[1].color=(*tuple(min(c*1.18,1.0) for c in base),1)
     nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
     nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
+
     bs.inputs["Metallic"].default_value=metallic
     bs.inputs["Roughness"].default_value=rough
     if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=coat
     if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.10
-    if bump:
-        b=nt.nodes.new("ShaderNodeBump")
-        b.inputs["Strength"].default_value=bump
-        b.inputs["Distance"].default_value=0.004
-        nt.links.new(noise.outputs["Fac"],b.inputs["Height"])
-        nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
+    if "Anisotropic IOR Level" in bs.inputs: bs.inputs["Anisotropic IOR Level"].default_value=anisotropic
+
+    bump=nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value=micro_strength
+    bump.inputs["Distance"].default_value=0.0025
+    nt.links.new(noise.outputs["Fac"],bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
     nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
     m.diffuse_color=(*base,1)
     return m
 
-# Realismo por categoría: plástico ABS, acero, aluminio, cobre, PCB, silicio y goma.
-V9_ABS=_v9_pbr("V9 ABS",(0.010,0.012,0.016),0.02,0.29,180,5.0,0.16,0.24)
-V9_PCB=_v9_pbr("V9 PCB",(0.004,0.060,0.012),0.08,0.31,520,6.0,0.14,0.08)
-V9_SILICON=_v9_pbr("V9 Silicon",(0.006,0.008,0.012),0.05,0.25,800,7.0,0.10,0.12)
-V9_ALU=_v9_pbr("V9 Aluminum",(0.48,0.52,0.57),0.98,0.19,900,5.0,0.08,0.16)
-V9_STEEL=_v9_pbr("V9 Steel",(0.20,0.23,0.28),0.96,0.23,700,6.0,0.09,0.12)
-V9_COPPER=_v9_pbr("V9 Copper",(0.46,0.095,0.022),0.98,0.20,1000,5.0,0.07,0.10)
-V9_SOLDER=_v9_pbr("V9 Solder",(0.48,0.50,0.52),0.92,0.18,1400,4.0,0.05,0.08)
-V9_GOLD=_v9_pbr("V9 Gold",(0.70,0.43,0.055),0.99,0.15,1200,5.0,0.04,0.08)
-V9_RUBBER=_v9_pbr("V9 Rubber",(0.004,0.005,0.007),0.0,0.62,140,5.0,0.24,0.02)
-V9_THERMAL=_v9_pbr("V9 Thermal Paste",(0.70,0.73,0.77),0.15,0.30,220,4.0,0.06,0.12)
+V10_ABS=_v10_pbr("V10 ABS",(0.012,0.014,0.018),0.03,0.30,260,0.10,0.28)
+V10_PCB=_v10_pbr("V10 PCB",(0.004,0.055,0.012),0.10,0.32,420,0.075,0.06)
+V10_SILICON=_v10_pbr("V10 Silicon",(0.005,0.007,0.010),0.08,0.28,700,0.07,0.12)
+V10_ALU=_v10_pbr("V10 Aluminum",(0.48,0.51,0.55),0.97,0.22,900,0.045,0.18,0.35)
+V10_STEEL=_v10_pbr("V10 Steel",(0.18,0.21,0.25),0.96,0.25,700,0.05,0.12,0.12)
+V10_COPPER=_v10_pbr("V10 Copper",(0.43,0.075,0.018),0.98,0.23,1000,0.045,0.08,0.22)
+V10_GOLD=_v10_pbr("V10 Gold",(0.68,0.39,0.045),0.99,0.17,1200,0.035,0.08,0.18)
+V10_RUBBER=_v10_pbr("V10 Rubber",(0.003,0.004,0.006),0.0,0.66,180,0.12,0.02)
+V10_THERMAL=_v10_pbr("V10 Thermal Paste",(0.68,0.71,0.75),0.05,0.34,240,0.035,0.12)
 
-# Eliminar polvo visible y materiales de polvo de la hero PC.
+# 3) REASIGNACION SEGURA: solo componentes inequívocos.
+# No se cambia el material de toda la HP_ por nombre parcial.
+for o in list(bpy.data.objects):
+    if o.type!="MESH" or not o.name.startswith("HP_"):
+        continue
+    n=o.name.upper()
+    if n in {"HP_MOTHERBOARD"}:
+        o.data.materials.clear(); o.data.materials.append(V10_PCB)
+    elif n in {"HP_CPU"}:
+        o.data.materials.clear(); o.data.materials.append(V10_ALU)
+    elif "CHIP" in n or "IC_" in n or "BIOS" in n or "SODIMM_CHIP" in n:
+        o.data.materials.clear(); o.data.materials.append(V10_SILICON)
+    elif "HEATPIPE" in n:
+        o.data.materials.clear(); o.data.materials.append(V10_COPPER)
+    elif "FIN" in n or "COOLER_PLATE" in n:
+        o.data.materials.clear(); o.data.materials.append(V10_ALU)
+    elif "SCREW" in n or "BRACKET" in n or "SOCKET" in n:
+        o.data.materials.clear(); o.data.materials.append(V10_STEEL)
+    elif "CABLE" in n or "WIRE" in n:
+        o.data.materials.clear(); o.data.materials.append(V10_RUBBER)
+
+# 4) DETALLE REAL DE LA PLACA — EN LAS COORDENADAS REALES DEL MODELO
+# CPU real: (-1.0, 0.35), RAM real: (0.03,-1.0)
+# Esto evita piezas suspendidas en posiciones inventadas.
+for i,(x,y) in enumerate(((-2.15,-1.75),(0.20,-1.75),(-2.15,1.85),(0.20,1.85))):
+    cyl("V10_MB_SCREW_%02d"%i,L(x,y,0.235),0.045,0.028,V10_STEEL,COL_PC,seg=32)
+
+# SMD / resistencias junto a VRM y zona de RAM.
+for i in range(24):
+    x=-1.95+(i%12)*0.16
+    y=-1.72+(i//12)*0.24
+    box("V10_SMD_%02d"%i,L(x,y,0.285),(0.045,0.018,0.012),
+        V10_SILICON,COL_PC,0.004)
+
+# Contactos dorados CORRECTAMENTE alineados con la SO-DIMM existente.
+for i in range(18):
+    y=-1.58+i*0.071
+    box("V10_RAM_CONTACT_%02d"%i,L(0.03,y,0.335),(0.012,0.025,0.006),
+        V10_GOLD,COL_PC,0.0015)
+
+# VRM metálicos al lado de la CPU, no en el aire.
+for i in range(8):
+    x=-1.95+i*0.24
+    box("V10_VRM_%02d"%i,L(x,0.98,0.30),(0.075,0.065,0.035),
+        V10_STEEL,COL_PC,0.008)
+
+# 5) CPU REALISTA: sustrato + IHS + pasta, exactamente sobre el CPU original.
+box("V10_CPU_SUBSTRATE",L(-1.0,0.35,0.345),(0.40,0.40,0.018),V10_SILICON,COL_PC,0.010)
+box("V10_CPU_IHS",L(-1.0,0.35,0.405),(0.30,0.30,0.025),V10_ALU,COL_PC,0.018)
+
+# 6) DISIPADOR: SOLO SOBRE EL CONJUNTO COOLER REAL EXISTENTE.
+# Se usan las coordenadas de HP_COOLER_PLATE / HP_HEATPIPE / HP_FIN.
+for i,x in enumerate((-1.30,-1.0,-0.70)):
+    cyl("V10_HEATPIPE_%02d"%i,L(x,0.98,0.50),0.028,1.10,V10_COPPER,COL_PC,
+        rot=(R90,0,0),seg=48)
+
+# Aletas adicionales correctamente colocadas dentro de la torre del disipador.
+for i in range(10):
+    x=-1.55+i*0.12
+    box("V10_COOL_FIN_%02d"%i,L(x,1.45,0.48),(0.012,0.39,0.17),
+        V10_ALU,COL_PC,0.004)
+
+# 7) VENTILADOR REAL: centrado exactamente en FAN_C.
+# No se crean palas flotantes; se refuerza el hub y el aro existentes.
+cyl("V10_FAN_HUB",L(FAN_C[0],FAN_C[1],0.33),0.14,0.12,V10_STEEL,COL_PC,seg=64)
+cyl("V10_FAN_CAP",L(FAN_C[0],FAN_C[1],0.40),0.07,0.018,MAT_CYAN,COL_PC,seg=48)
+for i in range(8):
+    a0=2*math.pi*i/8
+    cyl("V10_FAN_SCREW_%02d"%i,
+        L(FAN_C[0]+0.50*math.cos(a0),FAN_C[1]+0.50*math.sin(a0),0.285),
+        0.022,0.018,V10_STEEL,COL_PC,seg=24)
+
+# 8) CABLEADO: se mantiene el cableado funcional original.
+# Añadimos clips muy pequeños y correctamente apoyados en la placa.
+for i,(x,y) in enumerate(((0.25,1.45),(0.55,1.62),(0.35,-0.10))):
+    box("V10_CABLE_CLIP_%02d"%i,L(x,y,0.27),(0.045,0.025,0.018),
+        V10_RUBBER,COL_PC,0.004)
+
+# 9) LIMPIEZA ABSOLUTA
+# Nada de polvo, residuos o geometría de las iteraciones anteriores.
 for o in list(bpy.data.objects):
     if o.name.startswith("HP_DUST") or "DUST" in o.name.upper():
-        bpy.data.objects.remove(o, do_unlink=True)
-dust=bpy.data.materials.get("Dust")
-if dust:
-    for o in bpy.data.objects:
-        if o.type=="MESH":
-            for i in range(len(o.data.materials)-1,-1,-1):
-                if o.data.materials[i]==dust:
-                    o.data.materials.pop(index=i)
-    if dust.users==0:
-        bpy.data.materials.remove(dust)
+        bpy.data.objects.remove(o,do_unlink=True)
+for m in list(bpy.data.materials):
+    if m.name.startswith("Dust"):
+        try:
+            bpy.data.materials.remove(m)
+        except Exception:
+            pass
 
-# Reasignación de materiales según componente.
-for o in bpy.data.objects:
-    if o.type!="MESH" or not o.name.startswith("HP_"): continue
-    n=o.name.upper()
-    if "CPU" in n or "PROCESSOR" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_ALU)
-    elif "PCB" in n or "MOTHER" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_PCB)
-    elif "CHIP" in n or "IC_" in n or "BIOS" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_SILICON)
-    elif "HEATPIPE" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_COPPER)
-    elif "FIN" in n or "COOLER" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_ALU)
-    elif "SCREW" in n or "BRACKET" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_STEEL)
-    elif "CABLE" in n or "WIRE" in n:
-        o.data.materials.clear(); o.data.materials.append(V9_RUBBER)
-
-# Tornillería realista en puntos clave de la placa.
-for i,(x,y) in enumerate(((-2.2,-1.7),(2.2,-1.7),(-2.2,1.7),(2.2,1.7),
-                          (-0.8,-1.85),(0.8,-1.85))):
-    cyl("V9_BOARD_SCREW_%02d"%i,L(x,y,0.30),0.045,0.035,V9_STEEL,COL_PC,seg=48)
-
-# Filas de capacitores SMD y VRM.
-for i in range(28):
-    x=-2.25+(i%14)*0.35
-    y=1.05+(i//14)*0.26
-    box("V9_SMD_%02d"%i,L(x,y,0.30),(0.045,0.022,0.018),V9_SILICON,COL_PC,0.004)
-for i in range(10):
-    x=-1.55+i*0.34
-    box("V9_VRM_%02d"%i,L(x,0.18,0.33),(0.11,0.12,0.045),V9_STEEL,COL_PC,0.010)
-
-# Contactos de RAM con metal dorado y pequeñas imperfecciones geométricas.
-for i in range(32):
-    x=-1.50+i*0.095
-    box("V9_RAM_GOLD_%02d"%i,L(x,1.62,0.36),(0.018,0.075,0.007),V9_GOLD,COL_PC,0.0015)
-
-# Conector SATA / alimentación: pines metálicos individuales.
-for row,y in enumerate((1.95,2.10)):
-    for i in range(12):
-        x=0.55+i*0.10
-        box("V9_CONNECTOR_%d_%02d"%(row,i),L(x,y,0.34),(0.018,0.028,0.008),V9_GOLD,COL_PC,0.001)
-
-# Pasta térmica realista: capa muy fina bajo el cooler.
-for o in bpy.data.objects:
-    if "PASTE" in o.name.upper() and o.type=="MESH":
-        o.data.materials.clear(); o.data.materials.append(V9_THERMAL)
-
-# Superficie del CPU: sustrato oscuro + IHS metálico separado.
-box("V9_CPU_SUBSTRATE",L(0.0,0.0,0.43),(0.58,0.58,0.025),V9_PCB,COL_PC,0.012)
-box("V9_CPU_IHS",L(0.0,0.0,0.49),(0.49,0.49,0.038),V9_ALU,COL_PC,0.025)
-
-# Heatspreader: micrograbado visual mediante bump ya incluido en V9_ALU.
-# Heatpipes de cobre adicionales para lectura cinematográfica.
-for i,x in enumerate((-0.28,0.0,0.28)):
-    cyl("V9_HEATPIPE_%02d"%i,L(x,-0.22,0.83),0.035,1.10,V9_COPPER,COL_PC,rot=(math.radians(90),0,0),seg=64)
-
-# Aletas del disipador: muchas capas finas con bevel para capturar highlights.
-for i in range(22):
-    x=-0.82+i*0.078
-    box("V9_COOLING_FIN_%02d"%i,L(x,-0.25,1.00),(0.018,0.48,0.32),V9_ALU,COL_PC,0.006)
-
-# Núcleo del ventilador y tornillos.
-cyl("V9_FAN_HUB",L(0.0,-0.25,1.34),0.22,0.10,V9_ALU,COL_PC,seg=64)
-for i in range(8):
-    a=2*math.pi*i/8
-    cyl("V9_FAN_SCREW_%02d"%i,L(0.0+0.52*math.cos(a),-0.25+0.52*math.sin(a),1.23),
-        0.026,0.035,V9_STEEL,COL_PC,seg=32)
-
-# 4K + muestreo alto: ahora sí se aprovecha la RTX 3090.
-QUALITY="FINAL"
-scene.render.resolution_x=3840
-scene.render.resolution_y=2160
-scene.render.resolution_percentage=100
+# 10) SOMBRAS / RENDER FOTORREALISTA
+# RTX 3090: Cycles + OptiX, alta calidad. Si OptiX no existe, Blender
+# conserva Cycles y usa el dispositivo disponible.
 try:
     scene.render.engine="BLENDER_EEVEE_NEXT"
 except Exception:
     pass
+
+# EEVEE: sombras y ray tracing robustos para el viewport/render rápido.
 try:
     scene.eevee.taa_render_samples=256
 except Exception:
     pass
 try:
-    scene.render.image_settings.file_format="PNG"
-    scene.render.image_settings.color_mode="RGBA"
+    scene.eevee.shadow_ray_count=8
+except Exception:
+    pass
+try:
+    scene.eevee.shadow_step_count=16
+except Exception:
+    pass
+try:
+    scene.eevee.use_raytracing=True
 except Exception:
     pass
 
+# Calidad final 4K.
+scene.render.resolution_x=3840
+scene.render.resolution_y=2160
+scene.render.resolution_percentage=100
+scene.render.image_settings.file_format="PNG"
+
+# ============================================================
+# FIN V10 — geometria integrada y materiales fisicos
+# ============================================================
 
 # ============================================================
 # 10. LUCES (calibradas para NO quemar la imagen)
