@@ -3056,3 +3056,190 @@ print("V14 micro-normal: preserved")
 print("Generic roughness override: removed")
 print("V14.1 PBR roughness: restored as the active values")
 print("=" * 70)
+
+
+# ============================================================
+# V14.3 — MICRO SURFACE + CINEMATIC LIGHTING PASS
+# Shader-only realism. NO geometry, NO transforms, NO new mesh objects.
+# ============================================================
+
+def _v143_input(bs, names):
+    for n in names:
+        if n in bs.inputs:
+            return bs.inputs[n]
+    return None
+
+def _v143_surface(mat_name, scale=180.0, detail=4.0,
+                  bump=0.012, rough_amount=0.08,
+                  scratch=0.0, dust=0.0, grease=0.0):
+    mat=bpy.data.materials.get(mat_name)
+    if not mat or not mat.use_nodes:
+        return
+    nt=mat.node_tree
+    bs=nt.nodes.get("Principled BSDF")
+    if not bs:
+        return
+    if nt.nodes.get("V143_SURFACE"):
+        return
+
+    tc=nt.nodes.get("Texture Coordinate")
+    if not tc:
+        tc=nt.nodes.new("ShaderNodeTexCoord")
+
+    # Large-scale variation: tiny manufacturing differences.
+    noise=nt.nodes.new("ShaderNodeTexNoise")
+    noise.name="V143_SURFACE"
+    noise.label="V14.3 micro surface"
+    noise.inputs["Scale"].default_value=scale
+    noise.inputs["Detail"].default_value=detail
+    noise.inputs["Roughness"].default_value=0.58
+    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
+
+    # Fine micro-normal: scratches/grain without geometry.
+    fine=nt.nodes.new("ShaderNodeTexNoise")
+    fine.name="V143_MICRO_GRAIN"
+    fine.inputs["Scale"].default_value=scale*3.2
+    fine.inputs["Detail"].default_value=2.0
+    fine.inputs["Roughness"].default_value=0.48
+    nt.links.new(tc.outputs["Object"],fine.inputs["Vector"])
+
+    b=nt.nodes.new("ShaderNodeBump")
+    b.name="V143_MICRO_BUMP"
+    b.inputs["Strength"].default_value=bump
+    b.inputs["Distance"].default_value=0.0018
+    nt.links.new(fine.outputs["Fac"],b.inputs["Height"])
+    nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
+
+    # Roughness variation, kept subtle.
+    ramp=nt.nodes.new("ShaderNodeValToRGB")
+    ramp.name="V143_ROUGHNESS_VARIATION"
+    ramp.color_ramp.elements[0].position=0.28
+    ramp.color_ramp.elements[0].color=(max(0.02,0.42-rough_amount),)*3+(1,)
+    ramp.color_ramp.elements[1].position=0.72
+    ramp.color_ramp.elements[1].color=(min(1.0,0.42+rough_amount),)*3+(1,)
+    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
+
+    rough_in=_v143_input(bs,["Roughness"])
+    if rough_in and not rough_in.is_linked:
+        nt.links.new(ramp.outputs["Color"],rough_in)
+
+    # Optional dust/grease are intentionally roughness-only. They do not
+    # change base color, preventing an artificial dirty-painted look.
+    if dust>0.0 or grease>0.0:
+        pat=nt.nodes.new("ShaderNodeTexNoise")
+        pat.name="V143_DUST_GREASE"
+        pat.inputs["Scale"].default_value=scale*0.12
+        pat.inputs["Detail"].default_value=2.0
+        pat.inputs["Roughness"].default_value=0.7
+        nt.links.new(tc.outputs["Object"],pat.inputs["Vector"])
+
+        mix=nt.nodes.new("ShaderNodeMixRGB")
+        mix.name="V143_DUST_GREASE_MIX"
+        mix.blend_type="MULTIPLY"
+        mix.inputs[0].default_value=min(0.35,dust+grease)
+        mix.inputs[1].default_value=(0.35,0.35,0.35,1)
+        mix.inputs[2].default_value=(0.78,0.78,0.78,1)
+        nt.links.new(pat.outputs["Fac"],mix.inputs[0])
+
+    # Keep the node graph deliberately simple and stable.
+    mat["V143_MICRODETAIL"]=True
+    mat["V143_SCRATCH_LEVEL"]=scratch
+    mat["V143_DUST_LEVEL"]=dust
+    mat["V143_GREASE_LEVEL"]=grease
+
+# Existing materials only. No material creation.
+for _name,_cfg in {
+    "Steel":              (220,4.0,0.010,0.055,0.18,0.012,0.010),
+    "Aluminum":           (260,4.0,0.008,0.050,0.16,0.008,0.006),
+    "Perforated Metal":   (300,4.0,0.009,0.060,0.14,0.010,0.006),
+    "Anodized Black":     (240,4.0,0.007,0.045,0.10,0.004,0.008),
+    "HP Black Plastic":   (180,3.0,0.010,0.065,0.08,0.018,0.030),
+    "Plastic Black":      (180,3.0,0.009,0.060,0.07,0.014,0.022),
+    "Plastic White":      (190,3.0,0.0,0.055,0.06,0.010,0.010),
+    "Keyboard Keys":      (210,3.0,0.006,0.050,0.04,0.008,0.018),
+    "PCB":                (320,4.0,0.004,0.045,0.02,0.002,0.004),
+    "V13 FR4 Photoreal":  (320,4.0,0.004,0.045,0.02,0.002,0.004),
+    "Rubber":             (150,3.0,0.010,0.050,0.03,0.004,0.018),
+    "Wall Panel Side":    (120,3.0,0.004,0.040,0.02,0.010,0.006),
+    "Wall Panel Back":    (120,3.0,0.004,0.040,0.02,0.010,0.006),
+    "Ceiling Panel":      (100,3.0,0.003,0.035,0.01,0.004,0.004),
+    "Floor":              (90,3.0,0.003,0.030,0.03,0.014,0.008),
+    "Floor Tile":         (140,3.0,0.004,0.035,0.03,0.008,0.006),
+}.items():
+    _v143_surface(_name,*_cfg)
+
+# --- CINEMATIC LIGHTING ---
+def _v143_light(name,energy=None,size=None,color=None):
+    o=bpy.data.objects.get(name)
+    if not o or o.type!="LIGHT":
+        return
+    if energy is not None:
+        o.data.energy=energy*LIGHT_SCALE
+    if size is not None and o.data.type=="AREA":
+        o.data.size=size
+    if color is not None:
+        o.data.color=color
+    try:
+        o.data.use_shadow=True
+    except Exception:
+        pass
+
+# Natural key: neutral/warm, not cyan.
+_v143_light("KEY_LIGHT",1050,7.0,(1.0,0.975,0.94))
+# Softer, weaker fill so shadows remain dimensional.
+_v143_light("FILL_LIGHT",210,8.0,(0.72,0.80,1.0))
+# Controlled blue rim on the HP.
+_v143_light("HERO_RIM",430,3.8,(0.28,0.48,1.0))
+_v143_light("HERO_KEY",1250,4.2,(1.0,0.985,0.95))
+_v143_light("HERO_TOP",620,3.5,(1.0,0.97,0.91))
+
+# Subtle environmental backlight.
+_v143_light("BACK_LIGHT",420,6.0,(0.40,0.58,1.0))
+
+# Accents: enough for reflections, not enough to tint the room.
+_v143_light("ACCENT_AMBER",85,4.0,(1.0,0.50,0.20))
+_v143_light("ACCENT_VIOLET",55,4.0,(0.62,0.36,1.0))
+_v143_light("ACCENT_TEAL",70,4.0,(0.16,0.70,0.76))
+
+# Ceiling practicals: neutral-cool architectural lighting.
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("CEILING_PRACTICAL"):
+        _o.data.energy=125*LIGHT_SCALE
+        _o.data.color=(0.88,0.93,1.0)
+        if _o.data.type=="AREA":
+            _o.data.size=3.8
+        try: _o.data.use_shadow=True
+        except Exception: pass
+
+# Server LEDs: very low environmental contribution.
+for _o in scene.objects:
+    if _o.type=="LIGHT" and _o.name.startswith("SERVER_PRACTICAL"):
+        _o.data.energy=12*LIGHT_SCALE
+        _o.data.color=(0.18,0.38,1.0)
+
+# Softbox: broad reflection source for realistic metal/plastic highlights.
+_v143_light("V14_SOFTBOX",520,6.5,(1.0,0.985,0.96))
+_v143_light("V14_RIM_SOFT",300,5.0,(0.38,0.58,1.0))
+
+# Preserve dark cinematic environment without blue wash.
+try:
+    bg=scene.world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Color"].default_value=(0.008,0.011,0.017,1.0)
+        bg.inputs["Strength"].default_value=0.16
+except Exception:
+    pass
+
+try:
+    scene.view_settings.view_transform="AgX"
+    scene.view_settings.exposure=-0.15
+except Exception:
+    pass
+
+print("="*70)
+print("V14.3 — MICRO SURFACE + CINEMATIC LIGHTING")
+print("Geometry created: NO")
+print("Geometry moved: NO")
+print("Microdetail: shaders only")
+print("Lighting: neutral key / soft fill / blue HP rim / controlled reflections")
+print("="*70)
