@@ -1366,6 +1366,188 @@ for x, y in ((-8.8, 1), (8.8, -1)):
     box("V7_BENCH_UNDERLIGHT", (x, y - 0.76, 0.52), (2.5, 0.015, 0.018), MAT_CYAN, COL_PROPS, 0)
 
 
+
+# ============================================================
+# V7.5 MATERIALS / REALISTIC RENDER OVERRIDE
+# Garantiza que el render final use colores y materiales robustos.
+# No depende de texturas externas ni de imagenes.
+# ============================================================
+
+def _v75_noise(nt, coord, scale=80.0, detail=3.0, rough=0.55):
+    n = nt.nodes.new("ShaderNodeTexNoise")
+    n.inputs["Scale"].default_value = scale
+    n.inputs["Detail"].default_value = detail
+    n.inputs["Roughness"].default_value = rough
+    nt.links.new(coord, n.inputs["Vector"])
+    return n.outputs["Fac"]
+
+def _v75_bump(nt, bsdf, fac, strength=0.12, distance=0.03):
+    b = nt.nodes.new("ShaderNodeBump")
+    b.inputs["Strength"].default_value = strength
+    b.inputs["Distance"].default_value = distance
+    nt.links.new(fac, b.inputs["Height"])
+    nt.links.new(b.outputs["Normal"], bsdf.inputs["Normal"])
+
+def _v75_make_material(name, base, metallic=0.0, rough=0.45, noise_scale=100.0,
+                       noise_amount=0.10, bump_strength=0.10,
+                       emission=None, emission_strength=0.0):
+    m = bpy.data.materials.get(name)
+    if not m:
+        return
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bs = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    tex = nt.nodes.new("ShaderNodeTexCoord")
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+
+    noise.inputs["Scale"].default_value = noise_scale
+    noise.inputs["Detail"].default_value = 3.0
+    noise.inputs["Roughness"].default_value = 0.55
+    nt.links.new(tex.outputs["Object"], noise.inputs["Vector"])
+    nt.links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
+
+    dark = tuple(max(c * (1.0 - noise_amount), 0.0) for c in base) + (1.0,)
+    light = tuple(min(c * (1.0 + noise_amount), 1.0) for c in base) + (1.0,)
+    ramp.color_ramp.elements[0].color = dark
+    ramp.color_ramp.elements[1].color = light
+
+    nt.links.new(ramp.outputs["Color"], bs.inputs["Base Color"])
+    bs.inputs["Metallic"].default_value = metallic
+    bs.inputs["Roughness"].default_value = rough
+    if "Coat Weight" in bs.inputs:
+        bs.inputs["Coat Weight"].default_value = 0.25 if metallic < 0.8 else 0.08
+    if "Coat Roughness" in bs.inputs:
+        bs.inputs["Coat Roughness"].default_value = 0.18
+    nt.links.new(bs.outputs["BSDF"], out.inputs["Surface"])
+
+    _v75_bump(nt, bs, noise, bump_strength, 0.018)
+
+    if emission:
+        if "Emission Color" in bs.inputs:
+            bs.inputs["Emission Color"].default_value = (*emission, 1.0)
+        if "Emission Strength" in bs.inputs:
+            bs.inputs["Emission Strength"].default_value = emission_strength * EMIS
+
+    m.diffuse_color = (*base, 1.0)
+    return m
+
+def _v75_screen_material(name, glow=(0.0, 0.45, 1.0), strength=2.0):
+    m = bpy.data.materials.get(name)
+    if not m:
+        return
+    m.use_nodes = True
+    nt = m.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bs = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    wave = nt.nodes.new("ShaderNodeTexWave")
+    noise = nt.nodes.new("ShaderNodeTexNoise")
+    mix = nt.nodes.new("ShaderNodeMixRGB")
+    bump = nt.nodes.new("ShaderNodeBump")
+
+    wave.wave_type = "BANDS"
+    wave.bands_direction = "Y"
+    wave.inputs["Scale"].default_value = 35.0
+    wave.inputs["Distortion"].default_value = 1.2
+    noise.inputs["Scale"].default_value = 3.0
+    noise.inputs["Detail"].default_value = 4.0
+    nt.links.new(tc.outputs["Object"], wave.inputs["Vector"])
+    nt.links.new(tc.outputs["Object"], noise.inputs["Vector"])
+    nt.links.new(noise.outputs["Fac"], mix.inputs[0])
+    mix.inputs[1].default_value = (0.002, 0.012, 0.025, 1.0)
+    mix.inputs[2].default_value = (*glow, 1.0)
+    nt.links.new(mix.outputs["Color"], bs.inputs["Base Color"])
+    nt.links.new(mix.outputs["Color"], bs.inputs["Emission Color"])
+    nt.links.new(wave.outputs["Color"], bump.inputs["Height"])
+    bump.inputs["Strength"].default_value = 0.12
+    bump.inputs["Distance"].default_value = 0.008
+    nt.links.new(bump.outputs["Normal"], bs.inputs["Normal"])
+    bs.inputs["Metallic"].default_value = 0.15
+    bs.inputs["Roughness"].default_value = 0.16
+    bs.inputs["Emission Strength"].default_value = strength * EMIS
+    nt.links.new(bs.outputs["BSDF"], out.inputs["Surface"])
+    m.diffuse_color = (*glow, 1.0)
+
+def _v75_apply_realistic_materials():
+    # Materiales fisicos principales: color fuerte + microvariacion + bump.
+    specs = {
+        "Floor": ((0.018,0.028,0.045),0.05,0.18,18,0.22,0.10),
+        "Floor Tile": ((0.035,0.055,0.080),0.35,0.22,28,0.18,0.08),
+        "Wall Panel Side": ((0.025,0.045,0.075),0.72,0.34,55,0.16,0.12),
+        "Wall Panel Back": ((0.025,0.045,0.075),0.72,0.34,55,0.16,0.12),
+        "Ceiling Panel": ((0.018,0.027,0.042),0.62,0.42,45,0.12,0.08),
+        "Anodized Black": ((0.008,0.012,0.018),0.88,0.30,180,0.10,0.12),
+        "Steel": ((0.22,0.25,0.29),0.92,0.29,140,0.12,0.14),
+        "Aluminum": ((0.48,0.52,0.57),0.94,0.24,180,0.10,0.13),
+        "Rubber": ((0.008,0.010,0.012),0.0,0.72,260,0.16,0.18),
+        "PCB": ((0.008,0.105,0.028),0.15,0.34,95,0.22,0.10),
+        "Copper": ((0.48,0.13,0.035),0.92,0.25,170,0.12,0.10),
+        "Gold": ((0.68,0.40,0.055),0.98,0.20,220,0.10,0.08),
+        "HP Black Plastic": ((0.012,0.014,0.018),0.18,0.34,210,0.13,0.16),
+        "Dust": ((0.25,0.22,0.18),0.0,0.92,45,0.20,0.08),
+        "Paste Dry": ((0.25,0.24,0.22),0.05,0.86,100,0.14,0.06),
+        "Paste New": ((0.72,0.76,0.82),0.45,0.22,130,0.08,0.05),
+        "Hazard": ((0.88,0.48,0.015),0.05,0.42,45,0.22,0.09),
+        "Keyboard Keys": ((0.045,0.050,0.060),0.0,0.38,160,0.13,0.12),
+        "Perforated Metal": ((0.20,0.23,0.28),0.86,0.32,120,0.15,0.12),
+        "Seat Fabric": ((0.025,0.075,0.25),0.0,0.94,320,0.22,0.16),
+        "Barcode Sticker": ((0.88,0.88,0.84),0.0,0.48,90,0.08,0.05),
+    }
+    for name, (base,met,rough,ns,amount,bump) in specs.items():
+        _v75_make_material(name, base, met, rough, ns, amount, bump)
+
+    _v75_screen_material("Screen", (0.0,0.42,1.0), 1.9)
+    _v75_screen_material("Screen Big", (0.0,0.55,1.0), 2.2)
+    _v75_screen_material("Screen HUD", (0.0,0.70,1.0), 2.0)
+
+    leds = {
+        "LED Cyan": ((0.0,0.70,1.0),5.0),
+        "LED Blue": ((0.02,0.18,1.0),5.0),
+        "LED Green": ((0.0,1.0,0.18),4.5),
+        "LED Red": ((1.0,0.015,0.008),4.5),
+        "LED Amber": ((1.0,0.30,0.01),4.5),
+        "LED Violet": ((0.55,0.08,1.0),4.5),
+        "Label White": ((0.70,0.82,1.0),2.0),
+    }
+    for name,(c,s) in leds.items():
+        _v75_make_material(name,c,0.05,0.28,220,0.06,0.06,c,s)
+
+    plastics = {
+        "Plastic Red":(0.60,0.025,0.018),
+        "Plastic Blue":(0.015,0.12,0.72),
+        "Plastic Yellow":(0.90,0.60,0.015),
+        "Plastic White":(0.72,0.75,0.78),
+        "Plastic Orange":(0.82,0.22,0.012),
+        "Plastic Green":(0.02,0.50,0.10),
+        "Plastic Violet":(0.34,0.055,0.62),
+        "Plastic Black":(0.018,0.019,0.024),
+    }
+    for name,c in plastics.items():
+        _v75_make_material(name,c,0.02,0.32,240,0.12,0.12)
+
+    # Vidrio: transparente pero con tinte visible y reflejo.
+    glass=bpy.data.materials.get("Glass")
+    if glass:
+        glass.use_nodes=True
+        nt=glass.node_tree; nt.nodes.clear()
+        out=nt.nodes.new("ShaderNodeOutputMaterial")
+        bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
+        bs.inputs["Base Color"].default_value=(0.12,0.35,0.48,1)
+        bs.inputs["Metallic"].default_value=0.05
+        bs.inputs["Roughness"].default_value=0.08
+        if "Transmission Weight" in bs.inputs: bs.inputs["Transmission Weight"].default_value=0.72
+        if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.45
+        nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
+        glass.diffuse_color=(0.12,0.35,0.48,1)
+
+_v75_apply_realistic_materials()
+
+
 # ============================================================
 # 10. LUCES (calibradas para NO quemar la imagen)
 # ============================================================
@@ -1506,56 +1688,3 @@ def setup_glow():
             tree.links.new(gl.outputs[0], out.inputs[0])
         else:
             tree.nodes.remove(gl)
-            tree.links.new(rl.outputs[0], out.inputs[0])
-            print("Glow: no se pudo configurar el nodo Glare (opcional).")
-    except Exception as e:
-        print("Glow no aplicado (es opcional):", e)
-
-
-setup_glow()
-
-
-# ============================================================
-# 13. ESCENA ESTATICA
-# ============================================================
-
-scene.timeline_markers.clear()
-scene.frame_start = 1
-scene.frame_end = 1
-scene.frame_set(1)
-# ============================================================
-# 14. VALIDACION
-
-# ============================================================
-
-print("")
-print("=" * 60)
-print(" IT SUPPORT - THE LAB V7 STATIC  |  Blender", bpy.app.version_string)
-print("=" * 60)
-underground = [o.name for o in scene.objects if o.type == "MESH" and o.location.z < -0.5]
-print("Objetos bajo el piso:", underground if underground else "ninguno")
-required = ["HP_PC_FLOOR", "HP_MOTHERBOARD", "HP_CPU", "HP_COOLER_PLATE", "HP_SODIMM_4GB",
-            "HP_STORAGE_2_5", "HP_ODD", "HP_LID", "HP_FAN_ROTOR", "HP_LID_HINGE"]
-for n in required:
-    print("   %-18s %s" % (n, "OK" if bpy.data.objects.get(n) else "FALTA"))
-print("Objetos en escena:", len(scene.objects), "| motas de polvo:", len(dust_items))
-print("Calidad:", QUALITY, "| exposicion:", EXPOSURE, "| escala de luces:", LIGHT_SCALE)
-print("Camara activa:", scene.camera.name if scene.camera else "NINGUNA")
-print("Animacion: DESACTIVADA | frame unico:", scene.frame_start, "-", scene.frame_end)
-
-
-# ============================================================
-# 15. GUARDADO (solo si el .blend ya esta guardado)
-# ============================================================
-
-try:
-    if bpy.data.is_saved:
-        out_path = os.path.join(os.path.dirname(bpy.data.filepath), "IT_SUPPORT_THE_LAB_V7_STATIC.blend")
-        bpy.ops.wm.save_as_mainfile(filepath=out_path, copy=True)
-        print("Copia guardada en:", out_path)
-    else:
-        print("Aviso: guarda tu .blend (Ctrl+S) para conservar la escena.")
-except Exception as e:
-    print("No se pudo guardar copia:", e)
-
-print("LISTO. V7 STATIC: cambia el viewport a Rendered y usa CAMERA_MASTER / CAMERA_WIDE.")
