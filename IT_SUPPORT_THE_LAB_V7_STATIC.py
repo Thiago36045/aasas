@@ -1709,9 +1709,9 @@ try:
 except Exception:
     pass
 
-scene.render.resolution_x = 1920
-scene.render.resolution_y = 1080
-scene.render.resolution_percentage = 100 if final else 50
+scene.render.resolution_x = 3840
+scene.render.resolution_y = 2160
+scene.render.resolution_percentage = 100
 scene.render.image_settings.file_format = "PNG"
 try:
     scene.render.image_settings.color_mode = "RGBA"
