@@ -1992,6 +1992,154 @@ bpy.context.view_layer.update()
 # FIN V11 — motherboard físicamente creíble
 # ============================================================
 
+
+# ============================================================
+# V12 — MACRO PHOTOREAL MOTHERBOARD
+# Material multicapa + copper routing + solder + silkscreen +
+# tiny passive components + realistic PCB edge.
+# ============================================================
+
+def _v12_mat(name, base, metallic, rough, scale, bump_strength):
+    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes=True
+    nt=m.node_tree; nt.nodes.clear()
+    out=nt.nodes.new("ShaderNodeOutputMaterial")
+    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
+    tc=nt.nodes.new("ShaderNodeTexCoord")
+    n=nt.nodes.new("ShaderNodeTexNoise")
+    n.inputs["Scale"].default_value=scale
+    n.inputs["Detail"].default_value=7.0
+    n.inputs["Roughness"].default_value=0.64
+    nt.links.new(tc.outputs["Object"],n.inputs["Vector"])
+    ramp=nt.nodes.new("ShaderNodeValToRGB")
+    nt.links.new(n.outputs["Fac"],ramp.inputs["Fac"])
+    ramp.color_ramp.elements[0].color=(*tuple(max(c*.78,0) for c in base),1)
+    ramp.color_ramp.elements[1].color=(*tuple(min(c*1.16,1) for c in base),1)
+    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
+    bs.inputs["Metallic"].default_value=metallic
+    bs.inputs["Roughness"].default_value=rough
+    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.18
+    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.14
+    bump=nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value=bump_strength
+    bump.inputs["Distance"].default_value=0.001
+    nt.links.new(n.outputs["Fac"],bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
+    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
+    m.diffuse_color=(*base,1)
+    return m
+
+V12_PCB=_v12_mat("V12 FR4 SOLDER MASK",(0.003,0.055,0.010),0.08,0.30,520,0.075)
+V12_CU=_v12_mat("V12 Exposed Copper",(0.48,0.055,0.012),0.98,0.18,1500,0.025)
+V12_ENIG=_v12_mat("V12 ENIG",(0.72,0.43,0.055),0.99,0.14,1800,0.018)
+V12_SOLDER=_v12_mat("V12 SAC Solder",(0.43,0.46,0.48),0.92,0.20,1300,0.035)
+V12_IC=_v12_mat("V12 IC Package",(0.002,0.003,0.005),0.08,0.24,1100,0.045)
+V12_SILK=_v12_mat("V12 White Silkscreen",(0.72,0.74,0.67),0.0,0.40,1000,0.012)
+V12_FR4_EDGE=_v12_mat("V12 FR4 Edge",(0.025,0.035,0.028),0.02,0.58,700,0.08)
+
+mb=bpy.data.objects.get("HP_MOTHERBOARD")
+if mb and mb.type=="MESH":
+    mb.data.materials.clear()
+    mb.data.materials.append(V12_PCB)
+
+# Retira únicamente la decoración V11 anterior para evitar duplicación.
+for o in list(bpy.data.objects):
+    if o.name.startswith("V11_"):
+        bpy.data.objects.remove(o,do_unlink=True)
+
+# Borde de PCB: capa muy fina que da espesor real al FR-4.
+box("V12_PCB_EDGE_FRONT",L(-1.05,-1.925,0.205),(1.34,0.010,0.025),V12_FR4_EDGE,COL_PC,0.004)
+box("V12_PCB_EDGE_BACK",L(-1.05,1.975,0.205),(1.34,0.010,0.025),V12_FR4_EDGE,COL_PC,0.004)
+box("V12_PCB_EDGE_LEFT",L(-2.385,0.025,0.205),(0.010,1.95,0.025),V12_FR4_EDGE,COL_PC,0.004)
+box("V12_PCB_EDGE_RIGHT",L(0.285,0.025,0.205),(0.010,1.95,0.025),V12_FR4_EDGE,COL_PC,0.004)
+
+# Zonas de cobre expuesto, como ocurre alrededor de pads y conectores.
+for i in range(28):
+    x=-2.18+(i%14)*0.17
+    y=-1.70+(i//14)*0.23
+    box("V12_CU_PAD_%03d"%i,L(x,y,0.222),(0.052,0.018,0.0025),V12_CU,COL_PC,0.002)
+
+# Routing realista: segmentos ortogonales y diagonales, apoyados sobre el solder mask.
+paths=[
+[(-2.22,-1.48),(-1.70,-1.48),(-1.48,-1.22),(-0.95,-1.22),(-0.72,-0.92),(-0.20,-0.92)],
+[(-2.18,-1.18),(-1.82,-1.18),(-1.60,-0.82),(-1.05,-0.82),(-0.82,-0.52),(-0.25,-0.52)],
+[(-2.12,-0.86),(-1.65,-0.86),(-1.42,-0.45),(-0.95,-0.45),(-0.70,-0.12),(-0.30,-0.12)],
+[(-2.05,-0.20),(-1.72,-0.20),(-1.45,0.12),(-0.92,0.12),(-0.68,0.42),(-0.28,0.42)],
+[(-2.12,0.42),(-1.70,0.42),(-1.45,0.72),(-0.90,0.72),(-0.68,1.04),(-0.22,1.04)],
+[(-2.08,0.92),(-1.65,0.92),(-1.42,1.22),(-0.92,1.22),(-0.65,1.50),(-0.18,1.50)],
+[(-0.12,-1.75),(0.08,-1.52),(0.08,-1.05),(0.22,-0.84),(0.22,-0.25)],
+[(-0.05,0.10),(0.12,0.30),(0.12,0.78),(0.24,0.98),(0.24,1.70)]
+]
+for pi,p in enumerate(paths):
+    for si in range(len(p)-1):
+        x1,y1=p[si]; x2,y2=p[si+1]
+        dx=x2-x1; dy=y2-y1; ln=max(math.hypot(dx,dy),0.001)
+        mid=((x1+x2)/2,(y1+y2)/2)
+        ang=math.atan2(dy,dx)
+        box("V12_CU_TRACE_%02d_%02d"%(pi,si),
+            L(mid[0],mid[1],0.224),(ln/2,0.006,0.0022),
+            V12_CU,COL_PC,0.001,rot=(0,0,ang))
+
+# Vias con anillo + agujero negro: detalle visible a distancia macro.
+for row in range(9):
+    for col in range(8):
+        x=-2.18+col*0.30+(row%2)*0.035
+        y=-1.68+row*0.40
+        if x>0.22: continue
+        cyl("V12_VIA_%02d_%02d"%(row,col),L(x,y,0.227),0.020,0.005,V12_ENIG,COL_PC,seg=24)
+        cyl("V12_VIA_HOLE_%02d_%02d"%(row,col),L(x,y,0.231),0.007,0.006,V12_IC,COL_PC,seg=16)
+
+# Componentes 0402/0603: muy pequeños y con terminales de soldadura.
+for i in range(36):
+    x=-2.08+(i%12)*0.18
+    y=-1.58+(i//12)*0.34
+    box("V12_R_BODY_%02d"%i,L(x,y,0.245),(0.038,0.014,0.012),V12_IC,COL_PC,0.003)
+    box("V12_R_A_%02d"%i,L(x-0.035,y,0.246),(0.007,0.016,0.009),V12_SOLDER,COL_PC,0.001)
+    box("V12_R_B_%02d"%i,L(x+0.035,y,0.246),(0.007,0.016,0.009),V12_SOLDER,COL_PC,0.001)
+
+# Capacitores SMD más grandes alrededor de VRM/PCH.
+for i in range(14):
+    x=-2.08+(i%7)*0.31
+    y=0.72+(i//7)*0.28
+    box("V12_CAP_%02d"%i,L(x,y,0.265),(0.065,0.040,0.030),V12_IC,COL_PC,0.009)
+    box("V12_CAP_END_A_%02d"%i,L(x-0.055,y,0.266),(0.009,0.036,0.018),V12_SOLDER,COL_PC,0.002)
+    box("V12_CAP_END_B_%02d"%i,L(x+0.055,y,0.266),(0.009,0.036,0.018),V12_SOLDER,COL_PC,0.002)
+
+# Inductores cuadrados del VRM.
+for i in range(7):
+    x=-2.05+i*0.29
+    box("V12_VRM_CHOKE_%02d"%i,L(x,1.55,0.30),(0.10,0.09,0.075),V12_IC,COL_PC,0.012)
+    text("V12_CHOKE_MARK_%02d"%i,"1R0",L(x,1.55,0.378),0.032,V12_SILK,COL_PC)
+
+# ICs principales con esquinas suaves y pines visibles.
+for i,(x,y,sx,sy) in enumerate([
+    (-0.55,0.62,0.22,0.18),(-0.52,1.18,0.18,0.14),(-1.62,-0.42,0.20,0.16)
+]):
+    box("V12_MAIN_IC_%02d"%i,L(x,y,0.292),(sx,sy,0.045),V12_IC,COL_PC,0.012)
+    for k in range(5):
+        px=x-sx*0.55+k*sx*0.275
+        box("V12_IC_PIN",L(px,y-sy*0.67,0.294),(0.009,0.020,0.005),V12_SOLDER,COL_PC,0.001)
+        box("V12_IC_PIN",L(px,y+sy*0.67,0.294),(0.009,0.020,0.005),V12_SOLDER,COL_PC,0.001)
+
+# Silkscreen fino, típico de placas reales.
+for i,(label,x,y) in enumerate([
+    ("HP", -2.18,1.78),("8200", -1.78,1.78),("REV 1.0",-1.20,1.78),
+    ("CPU",-1.42,0.70),("VRM",-1.98,1.35),("RAM",-0.04,-1.48),
+    ("SATA",0.02,1.70),("PCH",-0.52,0.38),("LAN",-0.18,1.95)
+]):
+    text("V12_SILK_%02d"%i,label,L(x,y,0.305),0.045,V12_SILK,COL_PC)
+
+# Pequeños puntos de prueba, jumpers y test pads.
+for i in range(12):
+    x=-1.82+(i%6)*0.30
+    y=0.02+(i//6)*0.20
+    cyl("V12_TEST_PAD_%02d"%i,L(x,y,0.232),0.018,0.004,V12_ENIG,COL_PC,seg=24)
+
+bpy.context.view_layer.update()
+# ============================================================
+# FIN V12
+# ============================================================
+
 # ============================================================
 # 10. LUCES (calibradas para NO quemar la imagen)
 # ============================================================
