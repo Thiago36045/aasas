@@ -3522,3 +3522,132 @@ bpy.context.view_layer.update()
 # ============================================================
 # FIN V23-V30
 # ============================================================
+
+
+# ============================================================
+# V31 — GEOMETRY SANITIZER / LAB INTEGRITY PASS
+# This pass runs last so it can validate everything created before it.
+# It hides only clearly invalid external geometry; intentional PC internals stay untouched.
+# ============================================================
+def _v31_world_bbox(obj):
+    try:
+        return [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    except Exception:
+        return []
+
+def _v31_bbox(obj):
+    pts=_v31_world_bbox(obj)
+    if not pts: return None
+    xs=[p.x for p in pts]; ys=[p.y for p in pts]; zs=[p.z for p in pts]
+    return (min(xs),max(xs),min(ys),max(ys),min(zs),max(zs))
+
+def _v31_overlap(a,b,margin=0.0):
+    return not (a[1] < b[0]-margin or a[0] > b[1]+margin or
+                a[3] < b[2]-margin or a[2] > b[3]+margin or
+                a[5] < b[4]-margin or a[4] > b[5]+margin)
+
+# 1) Remove stale V23-V30 duplicate objects if the script is executed more than once.
+for ob in list(bpy.data.objects):
+    if any(ob.name.startswith(p) for p in (
+        "V31_", "V28_DUST_PARTICLE"
+    )):
+        try: bpy.data.objects.remove(ob, do_unlink=True)
+        except Exception: pass
+
+# 2) Hard room envelope. Meshes outside the physical lab are almost always accidental.
+ROOM_BOUNDS=(-14.82,14.82,-9.15,10.78,-0.02,8.30)
+for ob in list(scene.objects):
+    if ob.type!="MESH" or ob.name.startswith(("HP_","V16_","V17_","V18_","V19_","V20_","V21_","V22_","V23_","V24_","V25_","V29_")):
+        continue
+    bb=_v31_bbox(ob)
+    if not bb: continue
+    cx=(bb[0]+bb[1])/2; cy=(bb[2]+bb[3])/2; cz=(bb[4]+bb[5])/2
+    if cx<ROOM_BOUNDS[0]-1 or cx>ROOM_BOUNDS[1]+1 or cy<ROOM_BOUNDS[2]-1 or cy>ROOM_BOUNDS[3]+1 or cz<ROOM_BOUNDS[4]-1 or cz>ROOM_BOUNDS[5]+1:
+        ob.hide_viewport=True
+        ob.hide_render=True
+        ob["V31_INVALID_OUTSIDE_LAB"]=True
+
+# 3) Build an actual keep-out volume from the hero PC's evaluated world bounds.
+# External panels, labels, lights, props and detail meshes are not allowed to intersect it.
+pc_parts=[]
+for ob in scene.objects:
+    if ob.type=="MESH" and ("HP_" in ob.name or any(c.name=="03_HERO_PC_HP8200" for c in ob.users_collection)):
+        bb=_v31_bbox(ob)
+        if bb: pc_parts.append(bb)
+
+if pc_parts:
+    px0=min(b[0] for b in pc_parts); px1=max(b[1] for b in pc_parts)
+    py0=min(b[2] for b in pc_parts); py1=max(b[3] for b in pc_parts)
+    pz0=min(b[4] for b in pc_parts); pz1=max(b[5] for b in pc_parts)
+    PC_KEEP=(px0,px1,py0,py1,pz0,pz1)
+    # External geometry gets a tiny clearance around the PC.
+    for ob in list(scene.objects):
+        if ob.type!="MESH": continue
+        if any(c.name=="03_HERO_PC_HP8200" for c in ob.users_collection) or "HP_" in ob.name:
+            continue
+        if ob.name.startswith(("V31_","V28_DUST_PARTICLE")): continue
+        bb=_v31_bbox(ob)
+        if bb and _v31_overlap(bb,PC_KEEP,margin=0.008):
+            # Deliberately preserve architecture/floor because they support the scene.
+            if any(c.name=="01_ARCHITECTURE" for c in ob.users_collection):
+                continue
+            ob.hide_viewport=True
+            ob.hide_render=True
+            ob["V31_PC_INTERSECTION"]=True
+
+# 4) Remove obviously unsupported micro-detail introduced by later realism passes.
+# Tiny objects are allowed only when they are close to a major object; isolated specks are hidden.
+major=[]
+for ob in scene.objects:
+    if ob.type=="MESH" and (ob.name.startswith(("HP_","V16_","V17_","V18_","V19_","V20_","V21_","V22_","V23_","V24_","V25_","V29_"))):
+        bb=_v31_bbox(ob)
+        if bb: major.append((ob,bb))
+for ob,bb in major:
+    sx=bb[1]-bb[0]; sy=bb[3]-bb[2]; sz=bb[5]-bb[4]
+    if max(sx,sy,sz)>0.12: continue
+    if "HP_" in ob.name: continue
+    cx=(bb[0]+bb[1])/2; cy=(bb[2]+bb[3])/2; cz=(bb[4]+bb[5])/2
+    near=False
+    for other,obb in major:
+        if other==ob: continue
+        ox=(obb[0]+obb[1])/2; oy=(obb[2]+obb[3])/2; oz=(obb[4]+obb[5])/2
+        if (cx-ox)**2+(cy-oy)**2+(cz-oz)**2 < 0.22**2:
+            near=True; break
+    if not near:
+        ob.hide_viewport=True
+        ob.hide_render=True
+        ob["V31_ISOLATED_DETAIL"]=True
+
+# 5) Reassert physical floor for the hero PC.
+pc_floor=bpy.data.objects.get("HP_PC_FLOOR")
+if pc_floor:
+    bb=_v31_bbox(pc_floor)
+    if bb:
+        zbase=bb[4]
+        dz=-zbase
+        if abs(dz)>0.001:
+            for ob in scene.objects:
+                if ob.type=="MESH" and ("HP_" in ob.name or any(c.name=="03_HERO_PC_HP8200" for c in ob.users_collection)):
+                    ob.location.z += dz
+
+# 6) Reassert camera validity and final static frame after all cleanup.
+scene.frame_start=1
+scene.frame_end=420
+scene.frame_set(1)
+if bpy.data.objects.get("V22_MASTER"):
+    scene.camera=bpy.data.objects["V22_MASTER"]
+
+# 7) Produce a useful integrity report in Blender console.
+_hidden=[o.name for o in scene.objects if o.hide_render and o.type=="MESH"]
+_pc_hits=[o.name for o in scene.objects if o.get("V31_PC_INTERSECTION")]
+_out_hits=[o.name for o in scene.objects if o.get("V31_INVALID_OUTSIDE_LAB")]
+print("="*70)
+print("V31 GEOMETRY INTEGRITY")
+print("Ocultos por interseccion con HP:",len(_pc_hits))
+print("Ocultos fuera del laboratorio:",len(_out_hits))
+print("Detalles aislados ocultos:",len([o for o in scene.objects if o.get("V31_ISOLATED_DETAIL")]))
+print("Total mesh ocultos:",len(_hidden))
+print("="*70)
+# ============================================================
+# FIN V31
+# ============================================================
