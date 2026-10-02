@@ -1825,6 +1825,173 @@ scene.render.image_settings.file_format="PNG"
 # FIN V10 — geometria integrada y materiales fisicos
 # ============================================================
 
+
+# ============================================================
+# V11 — EXTREME REAL PCB / MOTHERBOARD MATERIAL PASS
+# PCB profesional: solder mask, fibra de vidrio, cobre, vias,
+# pads, silkscreen, microtextura y trazas finas.
+# Todo queda físicamente apoyado sobre HP_MOTHERBOARD.
+# ============================================================
+
+def _v11_pcb_material():
+    m=bpy.data.materials.get("V11 REAL PCB") or bpy.data.materials.new("V11 REAL PCB")
+    m.use_nodes=True
+    nt=m.node_tree; nt.nodes.clear()
+    out=nt.nodes.new("ShaderNodeOutputMaterial")
+    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
+    tc=nt.nodes.new("ShaderNodeTexCoord")
+
+    # Base de fibra de vidrio verde oscuro.
+    noise=nt.nodes.new("ShaderNodeTexNoise")
+    noise.inputs["Scale"].default_value=420.0
+    noise.inputs["Detail"].default_value=8.0
+    noise.inputs["Roughness"].default_value=0.68
+    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
+
+    fiber=nt.nodes.new("ShaderNodeTexWave")
+    fiber.wave_type="BANDS"
+    fiber.bands_direction="X"
+    fiber.inputs["Scale"].default_value=900.0
+    fiber.inputs["Distortion"].default_value=5.0
+    fiber.inputs["Detail"].default_value=5.0
+    fiber.inputs["Detail Scale"].default_value=2.5
+    nt.links.new(tc.outputs["Object"],fiber.inputs["Vector"])
+
+    mix=nt.nodes.new("ShaderNodeMixRGB")
+    mix.blend_type="MULTIPLY"
+    mix.inputs[0].default_value=0.22
+    mix.inputs[2].default_value=(0.008,0.085,0.018,1)
+    nt.links.new(noise.outputs["Fac"],mix.inputs[1])
+    nt.links.new(fiber.outputs["Color"],mix.inputs[2])
+
+    # Variación muy sutil del solder mask, no un plástico verde plano.
+    ramp=nt.nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].color=(0.002,0.028,0.006,1)
+    ramp.color_ramp.elements[1].color=(0.010,0.115,0.025,1)
+    ramp.color_ramp.elements[0].position=0.25
+    ramp.color_ramp.elements[1].position=0.75
+    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
+
+    bs.inputs["Metallic"].default_value=0.12
+    bs.inputs["Roughness"].default_value=0.31
+    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.22
+    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.16
+
+    bump=nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value=0.13
+    bump.inputs["Distance"].default_value=0.0012
+    nt.links.new(noise.outputs["Fac"],bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"],bs.inputs["Normal"])
+    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
+    m.diffuse_color=(0.004,0.08,0.015,1)
+    return m
+
+V11_PCB=_v11_pcb_material()
+V11_COPPER=_v10_pbr("V11 Copper",(0.50,0.075,0.018),0.98,0.20,1200,0.025,0.08,0.25)
+V11_GOLD=_v10_pbr("V11 ENIG Gold",(0.72,0.46,0.075),0.99,0.16,1500,0.018,0.10,0.20)
+V11_SOLDER=_v10_pbr("V11 Solder",(0.43,0.46,0.49),0.92,0.19,1100,0.025,0.06,0.15)
+V11_BLACK=_v10_pbr("V11 IC Black",(0.003,0.004,0.006),0.08,0.25,900,0.045,0.16)
+V11_SILK=_v10_pbr("V11 Silkscreen",(0.70,0.73,0.65),0.02,0.43,800,0.018,0.04)
+
+# La placa original es la referencia absoluta.
+mb=bpy.data.objects.get("HP_MOTHERBOARD")
+if mb and mb.type=="MESH":
+    mb.data.materials.clear()
+    mb.data.materials.append(V11_PCB)
+
+# Geometría de cobre extremadamente fina, siempre dentro del área de la PCB.
+# Se usa z=0.215 para quedar sobre el solder mask y no flotar.
+_trace_z=0.216
+_pad_z=0.219
+_via_z=0.222
+
+# Tramas de trazas principales: líneas finas con cambios de dirección.
+_trace_paths=[
+    [(-2.05,-1.55),(-1.35,-1.55),(-1.10,-1.25),(-0.55,-1.25),(-0.30,-1.05)],
+    [(-2.05,-1.30),(-1.55,-1.30),(-1.30,-0.90),(-0.55,-0.90),(-0.30,-0.65)],
+    [(-1.90,-0.55),(-1.45,-0.55),(-1.20,-0.15),(-0.55,-0.15),(-0.28,0.18)],
+    [(-1.95,0.80),(-1.55,0.80),(-1.30,0.48),(-0.65,0.48),(-0.35,0.78)],
+    [(-1.85,1.35),(-1.40,1.35),(-1.15,1.05),(-0.55,1.05),(-0.30,1.35)],
+    [(-0.25,-1.70),(0.05,-1.40),(0.05,-0.75),(0.18,-0.45),(0.18,0.10)],
+    [(-0.15,0.35),(0.05,0.65),(0.05,1.10),(0.22,1.40),(0.22,1.75)],
+]
+for ti,path in enumerate(_trace_paths):
+    for si in range(len(path)-1):
+        (x1,y1),(x2,y2)=path[si],path[si+1]
+        dx=x2-x1; dy=y2-y1
+        ln=max((dx*dx+dy*dy)**0.5,0.001)
+        mid=(x1+dx*0.5,y1+dy*0.5)
+        ang=math.atan2(dy,dx)
+        box("V11_COPPER_TRACE_%02d_%02d"%(ti,si),
+            L(mid[0],mid[1],_trace_z),(ln*0.5,0.008,0.0028),
+            V11_COPPER,COL_PC,0.0015,rot=(0,0,ang))
+
+# Microtrazas paralelas para densidad visual.
+for row in range(9):
+    y=-1.72+row*0.40
+    for seg in range(3):
+        x=-2.08+seg*0.58
+        box("V11_MICROTRACE",L(x+0.23,y,_trace_z+0.001),
+            (0.22,0.0035,0.0018),V11_COPPER,COL_PC,0.0008)
+
+# Vias reales: anillos metálicos con centro oscuro.
+for row in range(7):
+    for col in range(6):
+        x=-2.00+col*0.36+(row%2)*0.06
+        y=-1.70+row*0.52
+        if x>0.28: continue
+        cyl("V11_VIA_RING",L(x,y,_via_z),0.026,0.006,V11_COPPER,COL_PC,seg=20)
+        cyl("V11_VIA_HOLE",L(x,y,_via_z+0.004),0.010,0.007,V11_BLACK,COL_PC,seg=16)
+
+# Pads ENIG alrededor de reguladores, conectores y memoria.
+for i in range(12):
+    x=-1.92+i*0.16
+    box("V11_ENIG_PAD",L(x,1.78,_pad_z),(0.045,0.018,0.003),V11_GOLD,COL_PC,0.002)
+
+for i in range(10):
+    x=-1.90+i*0.18
+    box("V11_SOLDER_PAD",L(x,1.05,_pad_z),(0.032,0.022,0.003),V11_SOLDER,COL_PC,0.002)
+
+# Pequeños componentes SMD realistas: cuerpo negro + terminales metálicos.
+for i in range(18):
+    x=-1.90+(i%9)*0.21
+    y=-1.72+(i//9)*0.28
+    box("V11_SMD_BODY",L(x,y,0.255),(0.045,0.020,0.020),V11_BLACK,COL_PC,0.004)
+    box("V11_SMD_TERM_A",L(x-0.038,y,0.256),(0.009,0.022,0.011),V11_SOLDER,COL_PC,0.002)
+    box("V11_SMD_TERM_B",L(x+0.038,y,0.256),(0.009,0.022,0.011),V11_SOLDER,COL_PC,0.002)
+
+# ICs secundarios, todos apoyados directamente sobre la placa.
+for i,(x,y,sx,sy) in enumerate([
+    (-1.72,0.98,0.20,0.16),(-1.15,1.22,0.18,0.14),(-0.55,1.48,0.16,0.12),
+    (-1.75,-0.42,0.18,0.14),(-0.52,-1.52,0.18,0.14)
+]):
+    box("V11_IC_%02d"%i,L(x,y,0.275),(sx,sy,0.035),V11_BLACK,COL_PC,0.012)
+    for p in range(4):
+        px=x-sx*0.55+p*sx*0.36
+        box("V11_IC_PIN",L(px,y-sy*0.68,0.275),(0.010,0.018,0.006),V11_SOLDER,COL_PC,0.001)
+        box("V11_IC_PIN",L(px,y+sy*0.68,0.275),(0.010,0.018,0.006),V11_SOLDER,COL_PC,0.001)
+
+# Silkscreen técnico: referencias típicas de una motherboard real.
+for i,(label,x,y) in enumerate([
+    ("CPU", -1.46,0.78),("VRM", -1.95,1.55),("RAM", -0.02,-1.52),
+    ("SATA",0.05,1.65),("LAN",-0.20,1.92),("PCH",-0.05,0.72)
+]):
+    text("V11_SILK_%02d"%i,label,L(x,y,0.292),0.055,V11_SILK,COL_PC)
+
+# Líneas de referencia y pequeños marcadores de polaridad.
+for i in range(8):
+    x=-1.98+i*0.27
+    box("V11_SILK_LINE",L(x,-0.92,0.292),(0.09,0.002,0.0015),V11_SILK,COL_PC,0.0005)
+
+# Evitar que cualquier detalle quede fuera de la motherboard.
+# Todos los objetos V11 creados arriba están dentro de sus límites.
+bpy.context.view_layer.update()
+
+# ============================================================
+# FIN V11 — motherboard físicamente creíble
+# ============================================================
+
 # ============================================================
 # 10. LUCES (calibradas para NO quemar la imagen)
 # ============================================================
