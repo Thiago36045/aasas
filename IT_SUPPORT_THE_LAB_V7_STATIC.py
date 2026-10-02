@@ -2995,6 +2995,263 @@ bpy.context.view_layer.update()
 # FIN V15
 # ============================================================
 
+
+# ============================================================
+# V16-V22 — MASTER REALISM PASS
+# ============================================================
+def _pbr15(name,base,metal=0.0,rough=0.4):
+    m=bpy.data.materials.get(name) or bpy.data.materials.new(name); m.use_nodes=True
+    bs=m.node_tree.nodes.get("Principled BSDF"); bs.inputs["Base Color"].default_value=(*base,1)
+    bs.inputs["Metallic"].default_value=metal; bs.inputs["Roughness"].default_value=rough
+    return m
+
+V16_EDGE=_pbr15("V16 Multilayer PCB Edge",(0.025,0.035,0.030),0.05,0.52)
+V16_CU=_pbr15("V16 Exposed Copper",(0.62,0.11,0.025),0.98,0.16)
+V16_SOLDER=_pbr15("V16 Bright Solder",(0.52,0.55,0.58),0.95,0.11)
+V16_IC=_pbr15("V16 IC Package",(0.004,0.006,0.008),0.12,0.22)
+V16_GOLD=_pbr15("V16 ENIG Contacts",(0.86,0.54,0.07),0.99,0.10)
+V16_MARK=_pbr15("V16 Laser Marking",(0.70,0.72,0.68),0.02,0.36)
+V18_CABLE=_pbr15("V18 Cat6",(0.012,0.018,0.024),0.01,0.48)
+V18_FIBER=_pbr15("V18 Fiber",(0.18,0.012,0.04),0.01,0.38)
+V18_POWER=_pbr15("V18 IEC",(0.005,0.006,0.007),0.01,0.65)
+V20_TOOL=_pbr15("V20 Tool Steel",(0.32,0.35,0.37),0.90,0.19)
+V20_BLACK=_pbr15("V20 Instrument ABS",(0.008,0.010,0.013),0.04,0.32)
+V20_SCREEN=_pbr15("V20 Instrument Screen",(0.002,0.012,0.018),0.10,0.16)
+V21_LOGO=_pbr15("V21 Logo Metal",(0.62,0.75,0.82),0.82,0.15)
+V21_DARK=_pbr15("V21 Dashboard",(0.001,0.004,0.008),0.10,0.16)
+
+# ---------------- V16: HP 8200 product-level hardware ----------------
+mb=bpy.data.objects.get("HP_MOTHERBOARD")
+cpu=bpy.data.objects.get("HP_CPU")
+cool=bpy.data.objects.get("HP_COOLER_PLATE")
+ram=bpy.data.objects.get("HP_SODIMM_4GB")
+
+if mb:
+    z=mb.location.z
+    # Multilayer PCB edge + visible copper planes.
+    for i in range(5):
+        box("V16_PCB_EDGE",( -0.65,1.98,z+0.018+i*0.006),(0.75,0.010,0.0025),V16_EDGE,COL_PC)
+    for i in range(3):
+        box("V16_CU_EDGE",(-0.65,1.996,z+0.025+i*0.004),(0.55,0.003,0.0015),V16_CU,COL_PC)
+    # Different trace widths.
+    for i,w in enumerate((0.004,0.007,0.011,0.016)):
+        for j in range(6):
+            x=-1.95+j*.34; y=-1.40+i*.22
+            cable("V16_TRACE",[(x,y,z+.05),(x+.24,y+.05,z+.05)],w,V16_CU,COL_PC)
+    # Individual resistors.
+    for r in range(4):
+        for c in range(8):
+            x=-1.75+c*.27; y=.70+r*.20
+            box("V16_RESISTOR",(x,y,z+.055),(.052,.018,.012),V16_IC,COL_PC,0.004)
+            for dx in (-.07,.07): box("V16_RES_TERM",(x+dx,y,z+.055),(.018,.006,.005),V16_SOLDER,COL_PC)
+    # Capacitors.
+    for r in range(3):
+        for c in range(7):
+            x=-1.55+c*.31; y=-.80+r*.18
+            cyl("V16_CAP",(x,y,z+.060),.028,.050,V16_IC,COL_PC,seg=12)
+            for dx in (-.035,.035): cyl("V16_CAP_PAD",(x+dx,y,z+.058),.010,.006,V16_SOLDER,COL_PC,seg=10)
+    # Diodes and MOSFETs/transistors.
+    for i in range(12):
+        x=-1.60+(i%6)*.31; y=-1.52+(i//6)*.18
+        box("V16_DIODE",(x,y,z+.055),(.065,.018,.010),V16_IC,COL_PC,.003)
+    for i in range(10):
+        x=-1.85+(i%5)*.38; y=1.18+(i//5)*.22
+        box("V16_MOSFET",(x,y,z+.062),(.055,.050,.018),V16_IC,COL_PC,.008)
+        for dx in (-.035,0,.035): box("V16_MOS_PIN",(x+dx,y,z+.052),(.007,.038,.004),V16_SOLDER,COL_PC)
+    # Coded IC packages.
+    for x,y,code in [(-1.62,.10,"RT8206"),(-.92,.24,"ITE8587"),(-.20,-1.02,"Q67"),(-1.45,-1.12,"W25Q64")]:
+        box("V16_CODED_IC",(x,y,z+.065),(.17,.12,.025),V16_IC,COL_PC,.01)
+        text("V16_IC_CODE",code,(x,y-.12,z+.093),.032,V16_MARK,COL_PC,rot=(0,0,0))
+    # CPU socket frame, plate, lever and dense contact field.
+    if cpu:
+        cx,cy,cz=cpu.location
+        box("V16_SOCKET_FRAME",(cx,cy,cz-.09),(.44,.44,.035),V16_IC,COL_PC,.018)
+        box("V16_SOCKET_PLATE",(cx,cy,cz-.035),(.38,.38,.018),V16_GOLD,COL_PC,.012)
+        for i in range(12):
+            for j in range(12):
+                cyl("V16_SOCKET_CONTACT",(cx-.27+i*.049,cy-.27+j*.049,cz-.005),.006,.024,V16_GOLD,COL_PC,seg=8)
+        box("V16_SOCKET_LEVER",(cx+.48,cy,cz+.02),(.025,.33,.025),V15_METAL_DARK,COL_PC)
+        cyl("V16_SOCKET_PIVOT",(cx+.45,cy,cz+.02),.035,.09,V16_SILVER,COL_PC,rot=(0,R90,0),seg=16)
+        # IHS micro engraving.
+        for i in range(5):
+            box("V16_IHS_MARK",(cx-.18+i*.09,cy+.12,cz+.035),(.028,.004,.002),V16_MARK,COL_PC)
+    # SODIMM packages + gold contacts.
+    if ram:
+        rx,ry,rz=ram.location
+        for i in range(8): box("V16_RAM_CHIP",(rx-.28+i*.08,ry,rz+.035),(.030,.11,.055),V16_IC,COL_PC,.006)
+        for i in range(24): box("V16_RAM_CONTACT",(rx-.46+i*.04,ry-.125,rz-.01),(.012,.008,.035),V16_GOLD,COL_PC)
+    # CMOS / CR2032.
+    cyl("V16_CMOS_HOLDER",(-.55,1.60,z+.075),.16,.035,V15_METAL_DARK,COL_PC,seg=32)
+    cyl("V16_CR2032",(-.55,1.60,z+.12),.13,.035,V16_SOLDER,COL_PC,seg=32)
+    text("V16_CR2032_MARK","CR2032",(-.55,1.60,z+.142),.032,V16_MARK,COL_PC,rot=(0,0,0))
+    # BIOS with pins.
+    box("V16_BIOS",(-1.10,1.55,z+.075),(.10,.08,.018),V16_IC,COL_PC,.006)
+    for i in range(8):
+        for yy in (-.075,.075): box("V16_BIOS_PIN",(-1.16+i*.018,1.55+yy,z+.055),(.005,.018,.004),V16_SOLDER,COL_PC)
+    # VRM: chokes + MOSFETs + capacitors.
+    for i in range(8):
+        x=-1.82+i*.23
+        box("V16_VRM_CHOKE",(x,1.48,z+.09),(.075,.075,.045),V15_METAL_DARK,COL_PC,.012)
+        cyl("V16_VRM_CAP",(x,1.22,z+.08),.026,.055,V16_SOLDER,COL_PC,seg=12)
+    # Dense cooler fins and realistic fan blades.
+    if cool:
+        cx,cy,cz=cool.location
+        for i in range(80):
+            x=cx-.72+i*.018
+            box("V16_FIN",(x,cy,cz+.16),(.004,.48,.16),V15_METAL_BRUSH,COL_PC,.001)
+    fan=bpy.data.objects.get("HP_FAN_ROTOR")
+    if fan:
+        fx,fy,fz=fan.location
+        for i in range(11):
+            a=2*math.pi*i/11
+            box("V16_FAN_BLADE",(fx+math.cos(a)*.23,fy+math.sin(a)*.23,fz+.02),(.18,.045,.012),V15_PLASTIC,COL_PC,rot=(0,0,a+.35))
+        cyl("V16_FAN_HUB",(fx,fy,fz+.035),.10,.035,V16_IC,COL_PC,seg=32)
+    # Phillips screws.
+    for x,y in [(-2.12,-1.72),(.17,-1.72),(-2.12,1.80),(.17,1.80)]:
+        cyl("V16_PHILLIPS",(x,y,z+.085),.055,.018,V16_SOLDER,COL_PC,seg=16)
+        box("V16_CROSS_A",(x,y,z+.104),(.040,.006,.003),V15_METAL_DARK,COL_PC)
+        box("V16_CROSS_B",(x,y,z+.104),(.006,.040,.003),V15_METAL_DARK,COL_PC)
+    text("V16_HP_MARK","hp",(-1.25,-1.82,z+.06),.16,V16_MARK,COL_PC,rot=(R90,0,0))
+    text("V16_PART_NO","HP 8200 USDT / 615114-001",(0,-1.98,z+.06),.052,V16_MARK,COL_PC,rot=(R90,0,0))
+
+# SATA connector + contacts, rear ports and plastic clips.
+for i in range(2):
+    xx=-.25+i*.30
+    box("V16_SATA_CONNECTOR",(xx,1.88,.42),(.12,.10,.08),V15_PLASTIC,COL_PC,.012)
+    for p in range(7): box("V16_SATA_CONTACT",(xx-.06+p*.02,1.995,.42),(.006,.008,.025),V16_GOLD,COL_PC)
+for i in range(6):
+    box("V16_REAR_PORT",(1.05+i*.22,1.90,.55),(.08,.10,.12),V15_PLASTIC,COL_PC,.015)
+for i in range(8):
+    box("V16_CABLE_CLIP",(-1.9+i*.45,-1.75,.50),(.035,.12,.045),V15_PLASTIC,COL_PC,.012)
+
+# ---------------- V17: physical laboratory infrastructure ----------------
+for y in (-7,-2,3,8):
+    for side in (-1,1):
+        x=side*14.30
+        box("V17_OUTLET",(x,y,1.05),(.035,.13,.18),V15_PLASTIC,COL_ARCH,.018)
+        box("V17_RJ45",(x,y+.28,1.32),(.035,.12,.10),V15_PLASTIC,COL_ARCH,.015)
+        box("V17_RJ45_GOLD",(x-side*.04,y+.28,1.32),(.010,.055,.045),V16_GOLD,COL_ARCH,.005)
+for y in (-5,0,5): box("V17_EXPANSION",(0,y,.09),(14,.025,.012),V15_RUBBER,COL_ARCH)
+for x,y in [(-11,9.8),(11,9.8),(-13.8,-8.8),(13.8,-8.8)]:
+    cyl("V17_CCTV",(x,y,6.6),.16,.30,V15_PLASTIC,COL_ARCH,rot=(R90,0,0),seg=24)
+    sphere("V17_LENS",(x,y-.16,6.6),.07,V20_SCREEN,COL_ARCH)
+    cyl("V17_SMOKE",(x*.55,y*.55,7.65),.12,.045,V15_PLASTIC,COL_ARCH,seg=24)
+    box("V17_TEMP",(x*.55+.25,y*.55,7.60),(.08,.04,.05),V15_METAL_DARK,COL_ARCH,.01)
+cyl("V17_EXTINGUISHER",(13,-5.5,1.15),.17,.70,MAT_PL_RED,COL_PROPS,seg=32)
+box("V17_EXT_BRACKET",(12.78,-5.5,1.35),(.04,.22,.50),V15_METAL_DARK,COL_PROPS,.01)
+box("V17_SAFETY_SIGN",(13.8,-5.5,2.35),(.015,.42,.30),MAT_HAZARD,COL_PROPS,.015)
+
+# ---------------- V18: cable infrastructure ----------------
+for x in (-9,-3,3,9):
+    box("V18_TRAY",(x,5.8,7.15),(1,4.2,.06),V15_METAL_DARK,COL_ARCH,.025)
+    for yy in (-3.6,-1.8,0,1.8,3.6): box("V18_TRAY_SUPPORT",(x,5.8+yy,6.88),(.07,.07,.28),V15_METAL_DARK,COL_ARCH,.01)
+for i in range(14):
+    x=-11+i*1.7
+    cable("V18_CAT6",[(x,7,6.4),(x+.25,6.2,6.15),(x+.4,5,5.75),(x+.1,4.1,5.2)],.020,V18_CABLE,COL_SERVER)
+for i in range(7):
+    x=-10+i*3.1
+    cable("V18_FIBER",[(x,7.15,6.65),(x+.15,6.6,6.35),(x+.5,5.5,6.05),(x+.65,4.6,5.7)],.010,V18_FIBER,COL_SERVER)
+for i in range(8):
+    x=-11.2+i*3.2
+    cable("V18_IEC",[(x,7,1),(x+.15,6.7,1),(x+.35,6.2,1.15),(x+.25,5.8,1.35)],.032,V18_POWER,COL_SERVER)
+for rx in (-10.8,-3.6,3.6,10.8):
+    box("V18_PDU",(rx+1.42,7.10,3.2),(.08,.08,2.5),V15_PLASTIC,COL_SERVER,.012)
+    for i in range(8): cyl("V18_PDU_PORT",(rx+1.32,7,2+i*.32),.028,.035,V16_GOLD,COL_SERVER,rot=(R90,0,0),seg=12)
+    box("V18_UPS",(rx,6.95,.52),(1.15,.42,.35),V15_METAL_DARK,COL_SERVER,.03)
+for i in range(10):
+    x=-9.5+i*2.1
+    box("V18_LABEL",(x,6.25,5.2),(.11,.035,.035),MAT_WHITE,COL_SERVER,.004)
+    text("V18_LABEL_TEXT","NET-%02d"%(i+1),(x,6.20,5.2),.028,MAT_BLACK,COL_SERVER,rot=(R90,0,0))
+
+# ---------------- V19: cinematic lighting with physical sources ----------------
+def _v19(name,loc,energy,size,color,target): return area_light(name,loc,energy,size,color,target)
+_v19("V19_KEY",(-5,-7,6.8),1250,5.5,(.93,.97,1),(0,0,2))
+_v19("V19_PC_RIM",(4,2.8,5.2),700,3,(.16,.42,1),(-.5,0,1))
+_v19("V19_SERVER_FILL",(-11,5.2,4.8),520,2.5,(.18,.35,.55),(-7,6.5,3))
+_v19("V19_BENCH",(9,-7,4.5),430,2.8,(1,.72,.45),(9,-6.5,1.2))
+for i,x in enumerate((-9,0,9)): _v19("V19_PANEL_%02d"%i,(x,0,7.45),300,2.2,(.82,.90,1),(x,0,0))
+for i,x in enumerate((-10.8,-3.6,3.6,10.8)): _v19("V19_RACK_%02d"%i,(x,6.95,4),170,1.1,(.15,.42,1),(x,6.8,3.2))
+try:
+    world=scene.world
+    if world and world.use_nodes:
+        out=world.node_tree.nodes.get("World Output")
+        vol=world.node_tree.nodes.get("V19_VOLUME") or world.node_tree.nodes.new("ShaderNodeVolumePrincipled")
+        vol.name="V19_VOLUME"; vol.inputs["Density"].default_value=.004; vol.inputs["Anisotropy"].default_value=.04
+        world.node_tree.links.new(vol.outputs["Volume"],out.inputs["Volume"])
+except Exception: pass
+
+# ---------------- V20: professional electronics bench ----------------
+box("V20_BENCH",(9,-6.3,1.15),(3,.78,.08),V15_METAL_DARK,COL_PROPS,.035)
+for x in (6.4,11.6): box("V20_LEG",(x,-6.3,.55),(.10,.10,.52),V15_METAL_DARK,COL_PROPS,.02)
+box("V20_OSCILLOSCOPE",(7.4,-6,1.75),(.72,.36,.42),V20_BLACK,COL_PROPS,.035)
+box("V20_SCOPE_SCREEN",(7.4,-6.37,1.82),(.48,.018,.27),V20_SCREEN,COL_PROPS,.005)
+for i in range(4): cyl("V20_SCOPE_KNOB",(7.98,-6.38,1.55+i*.13),.035,.035,V20_TOOL,COL_PROPS,rot=(R90,0,0),seg=16)
+box("V20_PSU",(9,-6,1.65),(.52,.34,.32),V20_BLACK,COL_PROPS,.03)
+for i in range(3): cyl("V20_PSU_KNOB",(9.48,-6.37,1.48+i*.13),.035,.035,V20_TOOL,COL_PROPS,rot=(R90,0,0),seg=16)
+box("V20_SOLDER_STATION",(10.1,-6,1.5),(.4,.28,.2),V20_BLACK,COL_PROPS,.025)
+cable("V20_SOLDER_CABLE",[(10.1,-6.35,1.42),(10.6,-6.15,1.2),(10.9,-5.85,1.25)],.016,V18_POWER,COL_PROPS)
+box("V20_MICROSCOPE_BASE",(11.1,-6.1,1.28),(.45,.32,.08),V15_METAL_DARK,COL_PROPS,.025)
+cyl("V20_MICROSCOPE_ARM",(11.1,-6.1,1.75),.045,.85,V20_TOOL,COL_PROPS,rot=(0,R90,0),seg=16)
+cyl("V20_MICROSCOPE_HEAD",(11.1,-6.1,2.12),.13,.24,V20_BLACK,COL_PROPS,seg=24)
+for i in range(5): box("V20_TWEEZER",(7+i*.42,-6.55,1.32),(.025,.28,.018),V20_TOOL,COL_PROPS,.01)
+box("V20_PASTE",(10.5,-6.55,1.38),(.16,.16,.09),V20_BLACK,COL_PROPS,.025)
+box("V20_ALCOHOL",(11.5,-6.55,1.48),(.12,.12,.30),V17_GLASS if bpy.data.materials.get("V17_GLASS") else MAT_GLASS,COL_PROPS,.025)
+for i in range(4): box("V20_COMPONENT_BIN",(6.7+i*.48,-5.55,1.38),(.18,.24,.14),V17_GLASS if bpy.data.materials.get("V17_GLASS") else MAT_GLASS,COL_PROPS,.02)
+box("V20_SSD",(8,-5.55,1.4),(.34,.08,.07),V15_METAL_DARK,COL_PROPS,.012)
+box("V20_HDD",(8.7,-5.55,1.4),(.36,.25,.045),V15_METAL_DARK,COL_PROPS,.018)
+box("V20_RAM",(9.4,-5.55,1.42),(.38,.04,.07),MAT_PCB,COL_PROPS,.006)
+cyl("V20_CPU",(10.1,-5.55,1.42),.14,.025,V16_SOLDER,COL_PROPS,seg=32)
+cable("V20_ESD_STRAP",[(11.9,-6,1.3),(12.3,-5.8,1.2),(12.45,-5.45,1.1)],.025,V18_CABLE,COL_PROPS)
+
+# ---------------- V21: THE LAB identity + dashboards ----------------
+text("V21_LOGO","THE LAB",(0,10.38,6.65),.62,V21_LOGO,COL_ARCH,rot=(R90,0,0))
+text("V21_SUBTITLE","IT SUPPORT / ENGINEERING LAB",(0,10.34,5.98),.16,MAT_WHITE,COL_ARCH,rot=(R90,0,0))
+for i,x in enumerate((-10.8,-3.6,3.6,10.8),1): text("V21_RACK_ID","RACK-%02d"%i,(x,7.02,7.30),.11,MAT_WHITE,COL_SERVER,rot=(R90,0,0))
+box("V21_DASH",(0,10.25,4.55),(4.6,.035,1.55),V21_DARK,COL_STAGE,.02)
+text("V21_DASH_TITLE","IT SUPPORT // THE LAB",(0,10.20,5.60),.24,V21_LOGO,COL_STAGE,rot=(R90,0,0))
+for i,line in enumerate(["SERVER STATUS ........ ONLINE","NETWORK .............. STABLE","STORAGE .............. 87%","BACKUP ............... ACTIVE","SECURITY ............. ACTIVE","TEMP ................. 21.4 C","CPU LOAD ............. 34%"]):
+    text("V21_DASH_LINE",line,(-2.8,10.19,5.18-i*.22),.075,MAT_CYAN,COL_STAGE,rot=(R90,0,0),align="LEFT")
+
+# ---------------- V22: film shot library ----------------
+def _v22(name,loc,target,lens,fstop):
+    cd=bpy.data.cameras.get(name) or bpy.data.cameras.new(name); cam=bpy.data.objects.get(name)
+    if not cam: cam=bpy.data.objects.new(name,cd); COL_CAMERA.objects.link(cam)
+    cam.location=loc; point_at(cam,target); cd.lens=lens; cd.sensor_width=36; cd.dof.use_dof=True; cd.dof.aperture_fstop=fstop
+    return cam
+for q in [
+("V22_MASTER",(0,-15.5,6),(0,2,2.7),32,9),("V22_WIDE",(12.8,-12,5.2),(0,2.5,2.7),28,10),
+("V22_HERO_PC",(4.8,-1.5,4.1),(-.55,0,.65),55,5),("V22_MACRO_CPU",(.4,-.8,1.45),(-.65,0,.48),100,2.4),
+("V22_MACRO_RAM",(-.2,-.8,1.55),(-.85,.15,.55),105,2.8),("V22_MACRO_VRM",(-1,-.65,1.35),(-1.25,.9,.5),95,2.8),
+("V22_SERVER",(-8.5,-10,3.6),(-8.8,7,3.2),50,5.6),("V22_ESD",(8.8,-11,3),(9,-6.2,1.35),42,5),
+("V22_COMMAND",(0,-9,4.1),(0,10.2,4.7),50,6.3),("V22_LOW_ANGLE",(10.5,-13,1.15),(0,3,2),34,8)
+]: _v22(*q)
+scene.camera=bpy.data.objects.get("V22_MASTER") or scene.camera
+
+# Controlled manufacturing imperfection: tiny roughness variation, no artificial dirt.
+for ob in scene.objects:
+    if ob.type=="MESH" and ob.data.materials:
+        for mm in ob.data.materials:
+            bs=mm.node_tree.nodes.get("Principled BSDF") if mm.use_nodes else None
+            if bs and "Roughness" in bs.inputs and "SCREEN" not in mm.name.upper() and "LED" not in mm.name.upper():
+                bs.inputs["Roughness"].default_value=min(max(bs.inputs["Roughness"].default_value*1.015,.03),.96)
+
+try:
+    scene.render.engine="CYCLES"; scene.cycles.samples=1024; scene.cycles.use_denoising=True
+    scene.cycles.use_adaptive_sampling=True; scene.cycles.max_bounces=14
+    scene.cycles.diffuse_bounces=6; scene.cycles.glossy_bounces=8; scene.cycles.transmission_bounces=10
+    scene.cycles.transparent_max_bounces=10; scene.cycles.device="GPU"
+    cp=bpy.context.preferences.addons["cycles"].preferences; cp.compute_device_type="OPTIX"
+    for d in cp.devices: d.use=True
+except Exception as e: print("V16-V22 OptiX:",e)
+scene.render.resolution_x=3840; scene.render.resolution_y=2160; scene.render.resolution_percentage=100
+scene.render.image_settings.file_format="PNG"
+try: scene.view_settings.view_transform="AgX"; scene.view_settings.exposure=-.22
+except Exception: pass
+bpy.context.view_layer.update()
+# ============================================================
+# FIN V16-V22
+# ============================================================
+
 # ============================================================
 # 13. ESCENA ESTATICA
 # ============================================================
