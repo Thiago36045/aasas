@@ -16,7 +16,7 @@ from mathutils import Vector
 # ------------------------------------------------------------
 # AJUSTES RAPIDOS  (si algo te queda muy claro u oscuro, toca SOLO esto)
 # ------------------------------------------------------------
-QUALITY = "PREVIEW"      # "PREVIEW" (rapido) o "FINAL" (calidad maxima)
+QUALITY = "FINAL"      # "PREVIEW" (rapido) o "FINAL" (calidad maxima)
 EXPOSURE = -0.15          # mas negativo = mas oscuro
 LIGHT_SCALE = 0.75       # multiplica la potencia de TODAS las luces
 EMIS = 0.65              # multiplica el brillo de neones / LEDs / pantallas
@@ -1495,6 +1495,142 @@ def _v75_apply_realistic_materials():
 
 _v75_apply_realistic_materials()
 
+
+
+
+# ============================================================
+# V8 HERO PC — PHOTOREAL HARDWARE PASS
+# Limpieza total + microdetalle de componentes + materiales PBR.
+# ============================================================
+
+def _v8_make(name, base, metallic=0.0, rough=0.35, scale=320.0, bump=0.10):
+    m=bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    m.use_nodes=True
+    nt=m.node_tree
+    nt.nodes.clear()
+    out=nt.nodes.new("ShaderNodeOutputMaterial")
+    bs=nt.nodes.new("ShaderNodeBsdfPrincipled")
+    tc=nt.nodes.new("ShaderNodeTexCoord")
+    noise=nt.nodes.new("ShaderNodeTexNoise")
+    ramp=nt.nodes.new("ShaderNodeValToRGB")
+    noise.inputs["Scale"].default_value=scale
+    noise.inputs["Detail"].default_value=4.0
+    noise.inputs["Roughness"].default_value=0.58
+    nt.links.new(tc.outputs["Object"],noise.inputs["Vector"])
+    nt.links.new(noise.outputs["Fac"],ramp.inputs["Fac"])
+    ramp.color_ramp.elements[0].color=(*tuple(max(v*0.82,0.0) for v in base),1)
+    ramp.color_ramp.elements[1].color=(*tuple(min(v*1.18,1.0) for v in base),1)
+    nt.links.new(ramp.outputs["Color"],bs.inputs["Base Color"])
+    bs.inputs["Metallic"].default_value=metallic
+    bs.inputs["Roughness"].default_value=rough
+    if "Coat Weight" in bs.inputs: bs.inputs["Coat Weight"].default_value=0.16
+    if "Coat Roughness" in bs.inputs: bs.inputs["Coat Roughness"].default_value=0.12
+    if bump:
+        b=nt.nodes.new("ShaderNodeBump")
+        b.inputs["Strength"].default_value=bump
+        b.inputs["Distance"].default_value=0.006
+        nt.links.new(noise.outputs["Fac"],b.inputs["Height"])
+        nt.links.new(b.outputs["Normal"],bs.inputs["Normal"])
+    nt.links.new(bs.outputs["BSDF"],out.inputs["Surface"])
+    m.diffuse_color=(*base,1)
+    return m
+
+V8_CPU_IHS=_v8_make("V8 CPU IHS",(0.46,0.49,0.53),0.96,0.16,480,0.07)
+V8_STORAGE=_v8_make("V8 Storage Housing",(0.045,0.052,0.062),0.82,0.22,360,0.08)
+V8_CHIP=_v8_make("V8 Silicon Package",(0.008,0.010,0.014),0.10,0.28,520,0.08)
+V8_SOLDER=_v8_make("V8 Solder",(0.48,0.50,0.52),0.86,0.20,700,0.05)
+V8_SILK=_v8_make("V8 PCB Silkscreen",(0.62,0.67,0.58),0.05,0.40,900,0.03)
+V8_ALU=_v8_make("V8 Brushed Aluminum",(0.54,0.57,0.61),0.97,0.18,650,0.08)
+
+# Eliminar físicamente todas las motas de polvo de la PC.
+for o in list(bpy.data.objects):
+    if o.name.startswith("HP_DUST"):
+        bpy.data.objects.remove(o, do_unlink=True)
+if "DUST_MESH" in bpy.data.meshes:
+    dm=bpy.data.meshes.get("DUST_MESH")
+    if dm and dm.users==0:
+        bpy.data.meshes.remove(dm)
+dust_items=[]
+
+# Ocultar/eliminar el material de polvo para impedir que vuelva a aparecer.
+dust_mat=bpy.data.materials.get("Dust")
+if dust_mat:
+    for o in bpy.data.objects:
+        if o.type=="MESH":
+            for i,mm in enumerate(list(o.data.materials)):
+                if mm==dust_mat:
+                    o.data.materials.pop(index=i)
+    if dust_mat.users==0:
+        bpy.data.materials.remove(dust_mat)
+
+# Asignación de materiales hiper-específicos a los componentes reales.
+for o in list(bpy.data.objects):
+    if o.type!="MESH" or not o.name.startswith("HP_"):
+        continue
+    n=o.name
+    if n=="HP_CPU":
+        o.data.materials.clear(); o.data.materials.append(V8_CPU_IHS)
+    elif "STORAGE" in n or "SATA" in n:
+        o.data.materials.clear(); o.data.materials.append(V8_STORAGE)
+    elif "CHIP" in n or "IC_" in n or "BIOS" in n:
+        o.data.materials.clear(); o.data.materials.append(V8_CHIP)
+    elif "HEATPIPE" in n:
+        o.data.materials.clear(); o.data.materials.append(MAT_COPPER)
+    elif "FIN" in n or "COOLER_PLATE" in n:
+        o.data.materials.clear(); o.data.materials.append(V8_ALU)
+    elif "SODIMM_CHIP" in n:
+        o.data.materials.clear(); o.data.materials.append(V8_CHIP)
+
+# Pistas de cobre ultrafinas y pads alrededor del área de CPU/RAM.
+for i in range(24):
+    x=-2.05+(i%8)*0.26
+    y=-1.55+(i//8)*0.55
+    box("V8_PCB_TRACE",L(x,y,0.225),(0.105,0.009,0.003),MAT_COPPER,COL_PC,0.002)
+for i in range(18):
+    x=-1.72+(i%9)*0.20
+    y=0.95+(i//9)*0.32
+    box("V8_SOLDER_PAD",L(x,y,0.228),(0.035,0.022,0.004),V8_SOLDER,COL_PC,0.003)
+
+# Red de pequeños componentes SMD para dar escala real a la placa.
+for i in range(20):
+    x=-2.12+(i%10)*0.22
+    y=0.95+(i//10)*0.24
+    box("V8_SMD",L(x,y,0.285),(0.035,0.018,0.012),V8_CHIP,COL_PC,0.003)
+
+# Detalle de contactos dorados del módulo RAM.
+for i in range(18):
+    y=-1.62+i*0.07
+    box("V8_RAM_CONTACT",L(0.03,y,0.332),(0.012,0.022,0.006),MAT_GOLD,COL_PC,0.001)
+
+# Ventilador: tornillería, eje y aro metálico más realistas.
+cyl("V8_FAN_HUB_RING",L(-1.0,-0.95,0.395),0.19,0.018,V8_ALU,COL_PC,seg=48)
+for a in range(8):
+    ang=2*math.pi*a/8
+    cyl("V8_FAN_SCREW",L(-1.0+0.51*math.cos(ang),-0.95+0.51*math.sin(ang),0.35),
+        0.022,0.025,MAT_STEEL,COL_PC,seg=20)
+
+# Conectores y contactos internos de alta resolución visual.
+for i in range(12):
+    x=0.72+i*0.12
+    box("V8_CONNECTOR_PIN",L(x,1.78,0.285),(0.018,0.045,0.006),MAT_GOLD,COL_PC,0.001)
+for i in range(8):
+    x=0.95+i*0.12
+    box("V8_POWER_PIN",L(x,1.98,0.285),(0.018,0.035,0.006),MAT_GOLD,COL_PC,0.001)
+
+# Etiquetas técnicas microscópicas sobre la PCB.
+for i,label in enumerate(("VRM","DDR4","SATA","LAN")):
+    text("V8_PCB_LABEL",label,L(-1.95+i*0.62,1.72,0.292),0.065,V8_SILK,COL_PC)
+
+# Limpieza visual del chasis: sin polvo, pero conserva pasta térmica como detalle técnico.
+for o in bpy.data.objects:
+    if o.type=="MESH" and "DUST" in o.name.upper():
+        o.hide_render=True
+        o.hide_viewport=True
+
+# 4K real de salida.
+scene.render.resolution_x=3840
+scene.render.resolution_y=2160
+scene.render.resolution_percentage=100
 
 
 # ============================================================
