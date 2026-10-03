@@ -2359,7 +2359,7 @@ def static_camera(name, loc, target, lens):
 # - encuadre ultra-wide para incluir paredes, techo, piso y zonas de trabajo
 # - orientada exclusivamente hacia el interior
 # - no se modifica la geometria ni la escala de la escena
-static_camera("CAMERA_MASTER", (0.0, -4.0, 5.0), (0.0, 1.5, 3.6), 15.0)
+static_camera("CAMERA_MASTER", (0.0, -6.8, 5.2), (0.0, 1.8, 3.9), 11.0)
 static_camera("CAMERA_HERO_PC", (4.5, 1.5, 4.6), L(-0.5, 0, 0.6), 40)
 static_camera("CAMERA_WIDE", (0.0, -20, 8), (0, 1.5, 3.5), 24)
 
@@ -5219,7 +5219,7 @@ V18_PHOTO_lights()
 # ============================================================
 
 def V18_PHOTO_cameras():
-    plan = {"CAMERA_MASTER": (15.0, 8.0, "HP_MOTHERBOARD"),
+    plan = {"CAMERA_MASTER": (11.0, 8.0, "HP_MOTHERBOARD"),
             "CAMERA_HERO_PC": (52.0, 5.6, "HP_MOTHERBOARD"),
             "CAMERA_WIDE": (28.0, 9.0, "HP_PC_FLOOR")}
     for name, (lens, fstop, focus) in plan.items():
@@ -5243,9 +5243,9 @@ V18_PHOTO_cameras()
 # el script puede retocar lente/DOF, pero NUNCA vuelve a sacar la camara del interior.
 _cam_master = bpy.data.objects.get("CAMERA_MASTER")
 if _cam_master and _cam_master.type == "CAMERA":
-    _cam_master.location = (0.0, -4.0, 5.0)
-    point_at(_cam_master, (0.0, 1.5, 3.6))
-    _cam_master.data.lens = 15.0
+    _cam_master.location = (0.0, -6.8, 5.2)
+    point_at(_cam_master, (0.0, 1.8, 3.9))
+    _cam_master.data.lens = 11.0
     _cam_master.data.sensor_width = 36.0
     _cam_master.data.clip_start = 0.05
     _cam_master.data.clip_end = 100.0
