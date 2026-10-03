@@ -4210,3 +4210,1210 @@ print("Objects transformed: NO")
 print("Cameras changed: NO")
 print("All realism added through existing materials, shaders and lights.")
 print("="*70)
+import bpy
+import math
+import os
+from mathutils import Vector
+
+# ============================================================
+# IT SUPPORT - THE LAB   |   V18 PHOTOREAL LAYER   (Blender 5.1)
+#
+# QUE ES: una capa que se ejecuta SOBRE tu escena V7 STATIC (ya construida).
+#   - NO crea laboratorio, NO mueve geometria, NO cambia camaras.
+#   - Reconstruye los MATERIALES de cada categoria (metal, plastico, PCB,
+#     cables, vidrio, pantallas, LEDs, piso, paredes, techo...) con shaders
+#     procedurales fisicamente plausibles, polvo inteligente, desgaste de
+#     bordes y variacion por objeto.
+#   - Reajusta luces, camaras (solo DOF/exposicion), color y render (Cycles+OptiX).
+#
+# COMO USARLO:
+#   1) Corre tu script V7 STATIC (queda la escena construida).
+#   2) Abre ESTE archivo en Scripting y pulsa Run Script.
+#   3) Es idempotente: puedes ejecutarlo varias veces; reconstruye los materiales.
+#
+# AJUSTES (lo unico que deberias tocar):
+# ============================================================
+V18_FINAL = True          # True: 4K + muestras altas | False: preview rapido
+V18_ENGINE = "CYCLES"     # "CYCLES" (OptiX, fotorrealista) o "EEVEE" (rapido)
+V18_SAMPLES = 512         # muestras finales de Cycles
+V18_EXPOSURE = -0.10      # unico control global de brillo: baja si ves la imagen clara
+V18_LIGHT_GAIN = 0.75     # multiplica TODAS las luces (igual que LIGHT_SCALE en V7)
+V18_DUST = 1.0            # 0 = sin polvo, 1 = normal, 2 = el doble
+V18_WEAR = 1.0            # 0 = sin desgaste de bordes, 1 = normal
+V18_BASE_SCRIPT = ""      # opcional: ruta al V7 si quieres que se ejecute solo antes
+
+scene = bpy.context.scene
+V18_DUST_COL = (0.30, 0.28, 0.25, 1.0)
+V18_LOG = {"ok": 0, "fail": [], "unknown": [], "overrides": 0}
+
+
+# ============================================================
+# 0. PRE-CHEQUEO DE LA ESCENA
+# ============================================================
+
+def V18_PHOTO_precheck():
+    if not bpy.data.objects.get("HP_MOTHERBOARD") and V18_BASE_SCRIPT and os.path.exists(V18_BASE_SCRIPT):
+        print("V18: escena vacia, ejecutando script base:", V18_BASE_SCRIPT)
+        with open(V18_BASE_SCRIPT, "r", encoding="utf-8") as f:
+            exec(compile(f.read(), V18_BASE_SCRIPT, "exec"), {"__name__": "__main__"})
+    if not bpy.data.objects.get("HP_MOTHERBOARD"):
+        raise RuntimeError(
+            "V18: no encuentro la escena V7 (falta HP_MOTHERBOARD). "
+            "Ejecuta primero tu script V7 STATIC en este mismo Blender y luego este archivo.")
+
+
+V18_PHOTO_precheck()
+
+
+# ============================================================
+# 1. ANALISIS DE LA ESCENA (colecciones, categorias, materiales)
+# ============================================================
+
+def V18_PHOTO_category(o):
+    n = o.name.upper()
+    if o.type == "LIGHT":
+        return "luz"
+    if o.type == "CAMERA":
+        return "camara"
+    if o.type == "EMPTY":
+        return "empty"
+    if o.type == "FONT":
+        return "texto"
+    if o.type == "CURVE":
+        return "cable"
+    if n.startswith("HP_"):
+        return "hardware_hp"
+    if any(k in n for k in ("SERVER", "RACK", "PATCH")):
+        return "rack"
+    if any(k in n for k in ("WALL", "FLOOR", "CEILING", "COLUMN", "BEAM", "DUCT", "PIPE", "DOOR", "VENT", "SKIRT")):
+        return "arquitectura"
+    if any(k in n for k in ("MONITOR", "SCREEN", "HUD", "OSCILLO", "COMMAND", "DISPLAY")):
+        return "pantalla"
+    if any(k in n for k in ("LED", "STRIP", "SLIT")):
+        return "led"
+    return "mobiliario/utileria"
+
+
+def V18_PHOTO_analyze():
+    print("=" * 70)
+    print("V18 ANALISIS DE LA ESCENA")
+    print("=" * 70)
+    for c in bpy.data.collections:
+        print("  coleccion %-22s %4d objetos" % (c.name, len(c.objects)))
+    cats = {}
+    for o in scene.objects:
+        cats[V18_PHOTO_category(o)] = cats.get(V18_PHOTO_category(o), 0) + 1
+    for k, v in sorted(cats.items()):
+        print("  categoria %-22s %4d" % (k, v))
+    no_mat = [o.name for o in scene.objects if o.type in ("MESH", "CURVE", "FONT") and
+              (not o.data.materials or any(m is None for m in o.data.materials))]
+    print("  objetos sin material (o con slot vacio):", len(no_mat), no_mat[:6])
+    print("  materiales:", len(bpy.data.materials), "| luces:",
+          len([o for o in scene.objects if o.type == "LIGHT"]), "| camaras:",
+          len([o for o in scene.objects if o.type == "CAMERA"]))
+    print("  motor actual:", scene.render.engine)
+
+
+V18_PHOTO_analyze()
+
+
+# ============================================================
+# 2. CONSTRUCTOR DE SHADERS (grafo limpio por material)
+# ============================================================
+
+def V18_rgba(c, k=1.0):
+    return (min(c[0] * k, 1.0), min(c[1] * k, 1.0), min(c[2] * k, 1.0), 1.0)
+
+
+class V18_G:
+    """Reconstruye un material desde cero con utilidades de nodos."""
+
+    def __init__(self, mat):
+        self.m = mat
+        try:
+            mat.use_nodes = True
+        except Exception:
+            pass
+        self.nt = mat.node_tree
+        self.nt.nodes.clear()
+        self.N, self.Lk = self.nt.nodes, self.nt.links
+        self.out = self.N.new("ShaderNodeOutputMaterial")
+        self.bs = self.N.new("ShaderNodeBsdfPrincipled")
+        self.Lk.new(self.bs.outputs["BSDF"], self.out.inputs["Surface"])
+        self.obj = self.N.new("ShaderNodeTexCoord").outputs["Object"]
+        self.rand = self.N.new("ShaderNodeObjectInfo").outputs["Random"]
+        geo = self.N.new("ShaderNodeNewGeometry")
+        self.nrm, self.pos = geo.outputs["Normal"], geo.outputs["Position"]
+        self._bump = None
+
+    # ---- basicos ----
+    def put(self, node, key, v):
+        if isinstance(v, bpy.types.NodeSocket):
+            self.Lk.new(v, node.inputs[key])
+        else:
+            node.inputs[key].default_value = v
+
+    def setv(self, name, v):
+        if name not in self.bs.inputs:
+            return
+        if isinstance(v, bpy.types.NodeSocket):
+            self.Lk.new(v, self.bs.inputs[name])
+        else:
+            self.bs.inputs[name].default_value = v
+
+    def swz(self, vec, pl):
+        if pl == "XYZ":
+            return vec
+        sep = self.N.new("ShaderNodeSeparateXYZ")
+        self.Lk.new(vec, sep.inputs["Vector"])
+        cmb = self.N.new("ShaderNodeCombineXYZ")
+        for dst, src in zip("XYZ", pl):
+            self.Lk.new(sep.outputs[src], cmb.inputs[dst])
+        return cmb.outputs["Vector"]
+
+    def scl(self, vec, s):
+        mp = self.N.new("ShaderNodeMapping")
+        self.Lk.new(vec, mp.inputs["Vector"])
+        if isinstance(s, (int, float)):
+            s = (s, s, s)
+        mp.inputs["Scale"].default_value = s
+        return mp.outputs["Vector"]
+
+    def comb(self, x, y, z):
+        c = self.N.new("ShaderNodeCombineXYZ")
+        self.put(c, "X", x)
+        self.put(c, "Y", y)
+        self.put(c, "Z", z)
+        return c.outputs["Vector"]
+
+    def noise(self, vec, scale=1.0, detail=4.0, rough=0.55, dist=0.0):
+        n = self.N.new("ShaderNodeTexNoise")
+        self.Lk.new(vec, n.inputs["Vector"])
+        n.inputs["Scale"].default_value = scale
+        n.inputs["Detail"].default_value = detail
+        n.inputs["Roughness"].default_value = rough
+        n.inputs["Distortion"].default_value = dist
+        return n.outputs["Fac"]
+
+    def ramp(self, fac, stops, interp="LINEAR"):
+        n = self.N.new("ShaderNodeValToRGB")
+        n.color_ramp.interpolation = interp
+        els = n.color_ramp.elements
+        for _ in range(max(len(stops) - 2, 0)):
+            els.new(1.0)
+        for e, (pos, col) in zip(els, stops):
+            e.position = pos
+            e.color = col
+        self.put(n, "Fac", fac)
+        return n.outputs["Color"]
+
+    def mapr(self, val, a0, a1, b0, b1):
+        n = self.N.new("ShaderNodeMapRange")
+        self.put(n, "Value", val)
+        n.inputs["From Min"].default_value = a0
+        n.inputs["From Max"].default_value = a1
+        n.inputs["To Min"].default_value = b0
+        n.inputs["To Max"].default_value = b1
+        return n.outputs["Result"]
+
+    def math(self, op, a, b=None, clamp=False):
+        n = self.N.new("ShaderNodeMath")
+        n.operation = op
+        n.use_clamp = clamp
+        self.put(n, 0, a)
+        if b is not None:
+            self.put(n, 1, b)
+        return n.outputs[0]
+
+    def mix(self, fac, a, b, blend="MIX"):
+        n = self.N.new("ShaderNodeMix")
+        n.data_type = "RGBA"
+        n.blend_type = blend
+        cols = [i for i in n.inputs if i.type == "RGBA"]
+        self.put(n, 0, fac)
+        for sock, v in ((cols[0], a), (cols[1], b)):
+            if isinstance(v, bpy.types.NodeSocket):
+                self.Lk.new(v, sock)
+            else:
+                sock.default_value = v
+        return [o for o in n.outputs if o.type == "RGBA"][0]
+
+    def lerpf(self, fac, a, b):
+        n = self.N.new("ShaderNodeMix")
+        n.data_type = "FLOAT"
+        self.put(n, 0, fac)
+        self.put(n, 2, a)
+        self.put(n, 3, b)
+        return n.outputs[0]
+
+    def sepz(self, vec):
+        sep = self.N.new("ShaderNodeSeparateXYZ")
+        self.Lk.new(vec, sep.inputs["Vector"])
+        return sep.outputs["Z"]
+
+    def bump(self, height, strength, dist):
+        b = self.N.new("ShaderNodeBump")
+        b.inputs["Strength"].default_value = strength
+        b.inputs["Distance"].default_value = dist
+        self.Lk.new(height, b.inputs["Height"])
+        if self._bump is not None:
+            self.Lk.new(self._bump, b.inputs["Normal"])
+        self._bump = b.outputs["Normal"]
+        if "Normal" in self.bs.inputs:
+            self.Lk.new(self._bump, self.bs.inputs["Normal"])
+
+    # ---- mascaras fisicas ----
+    def ao(self, dist):
+        try:
+            n = self.N.new("ShaderNodeAmbientOcclusion")
+            n.inputs["Distance"].default_value = dist
+            return n.outputs["AO"]
+        except Exception:
+            return 1.0
+
+    def edge(self, radius=0.02):
+        """Mascara de bordes (0..1). Usa el nodo Bevel (Cycles); en EEVEE devuelve ~0."""
+        try:
+            bv = self.N.new("ShaderNodeBevel")
+            bv.inputs["Radius"].default_value = radius
+            dot = self.N.new("ShaderNodeVectorMath")
+            dot.operation = "DOT_PRODUCT"
+            self.Lk.new(bv.outputs["Normal"], dot.inputs[0])
+            self.Lk.new(self.nrm, dot.inputs[1])
+            inv = self.math("SUBTRACT", 1.0, dot.outputs["Value"])
+            return self.mapr(inv, 0.0, 0.22, 0.0, 1.0)
+        except Exception:
+            return 0.0
+
+    def horiz(self):
+        return self.mapr(self.sepz(self.nrm), 0.55, 1.0, 0.0, 1.0)
+
+    def dust_mask(self, amount, ao_dist=0.4, horiz_w=0.6, scale=28.0):
+        """Mas polvo en esquinas ocluidas y superficies horizontales; moteado irregular."""
+        if amount <= 0 or V18_DUST <= 0:
+            return 0.0
+        inv = self.math("SUBTRACT", 1.0, self.ao(ao_dist))
+        base = self.math("ADD", self.math("MULTIPLY", inv, 0.8),
+                         self.math("MULTIPLY", self.horiz(), horiz_w))
+        mott = self.mapr(self.noise(self.scl(self.obj, scale), 1.0, 5.0, 0.6), 0.35, 0.75, 0.25, 1.0)
+        return self.math("MULTIPLY", self.math("MULTIPLY", base, mott), amount * V18_DUST, True)
+
+    def finish_dust(self, col, rough, dm):
+        if isinstance(dm, float) and dm == 0.0:
+            return col, rough
+        return self.mix(dm, col, V18_DUST_COL), self.lerpf(dm, rough, 0.9)
+
+
+# ============================================================
+# 3. RECETAS DE MATERIAL (cada categoria con identidad propia)
+# ============================================================
+
+def V18_SURFACE_floor(g, base, tile=False):
+    P = g.obj
+    big = g.noise(g.scl(P, 0.18), 1.0, 5.0, 0.55, 0.3)
+    col = g.mix(big, V18_rgba(base, 0.65), V18_rgba(base, 1.5))
+    col = g.mix(g.mapr(g.rand, 0, 1, 0, 0.35), col, V18_rgba(base, 2.1))      # cada baldosa distinta
+    lane = g.noise(g.scl(P, (0.35, 0.09, 0.35)), 1.0, 3.0, 0.5)               # carriles de transito
+    wear = g.mapr(lane, 0.45, 0.70, 0.0, 1.0)
+    col = g.mix(g.math("MULTIPLY", wear, 0.35), col, V18_rgba(base, 2.6))
+    sc1 = g.noise(g.scl(P, (2.0, 95.0, 2.0)), 1.0, 2.0, 0.5)
+    sc2 = g.noise(g.scl(P, (95.0, 2.0, 2.0)), 1.0, 2.0, 0.5)
+    grain = g.noise(g.scl(P, 320.0), 1.0, 3.0, 0.6)
+    r = g.lerpf(g.math("MULTIPLY", wear, 0.55), g.mapr(sc1, 0.3, 0.7, 0.09, 0.22), 0.42)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.18 if tile else 0.28, 0.5, 0.25, 22.0))
+    g.setv("Base Color", col)
+    g.setv("Roughness", r)
+    g.setv("Metallic", 0.22 if tile else 0.0)
+    g.setv("Coat Weight", 0.32)
+    g.setv("Coat Roughness", 0.07)
+    g.bump(sc1, 0.05, 0.01)
+    g.bump(sc2, 0.035, 0.01)
+    g.bump(grain, 0.02, 0.005)
+
+
+def V18_SURFACE_wall(g, base, plane="YZX", bw=3.0, rh=2.1, ceiling=False):
+    P = g.swz(g.obj, plane)
+    brk = g.N.new("ShaderNodeTexBrick")
+    try:
+        brk.offset = 0.0
+    except Exception:
+        pass
+    g.Lk.new(P, brk.inputs["Vector"])
+    brk.inputs["Color1"].default_value = V18_rgba(base, 1.0)
+    brk.inputs["Color2"].default_value = V18_rgba(base, 1.3)
+    brk.inputs["Mortar"].default_value = V18_rgba(base, 0.12)
+    brk.inputs["Scale"].default_value = 1.0
+    brk.inputs["Mortar Size"].default_value = 0.012
+    brk.inputs["Mortar Smooth"].default_value = 0.1
+    brk.inputs["Brick Width"].default_value = bw
+    brk.inputs["Row Height"].default_value = rh
+    mott = g.noise(g.scl(g.obj, 0.5), 1.0, 4.0, 0.55)
+    peel = g.noise(g.scl(g.obj, 380.0), 1.0, 2.0, 0.5)
+    col = g.mix(g.mapr(mott, 0.3, 0.7, 0.0, 0.3), brk.outputs["Color"], V18_rgba(base, 1.45))
+    r = g.mapr(mott, 0.3, 0.7, 0.36, 0.52)
+    if not ceiling:                                                           # rozaduras cerca del piso
+        low = g.mapr(g.sepz(g.pos), 0.0, 1.4, 1.0, 0.0)
+        scuff = g.math("MULTIPLY", low, g.mapr(g.noise(g.scl(g.obj, 4.0), 1.0, 4.0, 0.6), 0.4, 0.7, 0.0, 0.8), True)
+        col = g.mix(g.math("MULTIPLY", scuff, 0.7), col, V18_rgba(base, 0.35))
+        r = g.lerpf(g.math("MULTIPLY", scuff, 0.8), r, 0.75)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.12 if ceiling else 0.2, 0.6, 0.45, 18.0))
+    g.setv("Base Color", col)
+    g.setv("Roughness", r)
+    g.setv("Metallic", 0.0)
+    g.setv("Coat Weight", 0.10)
+    g.setv("Coat Roughness", 0.25)
+    g.bump(brk.outputs["Fac"], 0.4, 0.02)
+    g.bump(peel, 0.015, 0.004)
+
+
+def V18_SURFACE_metal(g, base, rough, streak=(2.0, 110.0, 110.0), wear=0.5, dust=0.05,
+                      tarnish=0.0, smudge=0.0, metallic=1.0):
+    P = g.obj
+    s1 = g.noise(g.scl(P, streak), 1.0, 4.0, 0.6)
+    s2 = g.noise(g.scl(P, (streak[0] * 2, streak[1] * 4, streak[2] * 4)), 1.0, 2.0, 0.5)
+    rv = g.mapr(g.rand, 0, 1, 0, 1)
+    tint_a = g.mix(rv, V18_rgba(base, 0.88), V18_rgba(base, 1.04))            # cada pieza algo distinta
+    tint_b = g.mix(rv, V18_rgba(base, 1.10), V18_rgba(base, 1.22))
+    col = g.mix(s1, tint_a, tint_b)
+    ed = g.math("MULTIPLY", g.edge(0.02), wear * V18_WEAR, True)
+    col = g.mix(ed, col, V18_rgba(base, 1.7))
+    if tarnish > 0:
+        tn = g.mapr(g.noise(g.scl(P, 7.0), 1.0, 4.0, 0.6), 0.4, 0.7, 0.0, tarnish)
+        col = g.mix(tn, col, V18_rgba(base, 0.5))
+    r = g.mapr(s1, 0.3, 0.7, max(rough - 0.09, 0.04), rough + 0.14)
+    r = g.lerpf(g.math("MULTIPLY", ed, 0.6), r, max(rough - 0.08, 0.04))      # bordes pulidos
+    if smudge > 0:
+        sm = g.mapr(g.noise(g.scl(P, 4.5), 1.0, 3.0, 0.6), 0.5, 0.78, 0.0, smudge)
+        r = g.math("ADD", r, sm)
+    col, r = g.finish_dust(col, r, g.dust_mask(dust, 0.35, 0.8, 26.0))
+    g.setv("Base Color", col)
+    g.setv("Metallic", metallic)
+    g.setv("Roughness", r)
+    g.bump(s1, 0.05, 0.004)
+    g.bump(s2, 0.03, 0.003)
+
+
+def V18_SURFACE_plastic(g, base, rough=0.36, grain=520.0, dust=0.05, wear=0.35, drift=0.14, coat=0.0):
+    P = g.obj
+    g1 = g.noise(g.scl(P, grain), 1.0, 3.0, 0.62)
+    p1 = g.noise(g.scl(P, 95.0), 1.0, 2.0, 0.5)
+    scr = g.noise(g.scl(P, (2.0, 180.0, 180.0)), 1.0, 2.0, 0.5)
+    dn = g.noise(g.scl(P, 5.0), 1.0, 2.0, 0.5)
+    tint = g.mix(g.mapr(g.rand, 0, 1, 0, 1), V18_rgba(base, 1 - drift), V18_rgba(base, 1 + drift))
+    col = g.mix(g.mapr(dn, 0.3, 0.7, 0.0, 0.6), tint, V18_rgba(base, 1 + drift * 1.6))
+    ed = g.math("MULTIPLY", g.edge(0.012), wear * V18_WEAR, True)
+    col = g.mix(ed, col, V18_rgba(base, 2.4))
+    r = g.mapr(g1, 0.3, 0.7, max(rough - 0.06, 0.05), rough + 0.10)
+    r = g.lerpf(g.math("MULTIPLY", ed, 0.6), r, max(rough - 0.14, 0.12))
+    col, r = g.finish_dust(col, r, g.dust_mask(dust, 0.4, 0.7, 24.0))
+    g.setv("Base Color", col)
+    g.setv("Metallic", 0.0)
+    g.setv("Roughness", r)
+    g.setv("IOR", 1.46)
+    g.setv("Coat Weight", coat)
+    g.setv("Coat Roughness", 0.12)
+    g.bump(g1, 0.07, 0.003)
+    g.bump(p1, 0.012, 0.004)
+    g.bump(scr, 0.010, 0.002)
+
+
+def V18_SURFACE_paint_steel(g, base):
+    """Chapa pintada del HP: pintura satinada con piel de naranja; el acero asoma en los bordes."""
+    P = g.obj
+    peel = g.noise(g.scl(P, 420.0), 1.0, 2.0, 0.5)
+    mott = g.noise(g.scl(P, 7.0), 1.0, 3.0, 0.5)
+    scr = g.noise(g.scl(P, (2.0, 200.0, 200.0)), 1.0, 2.0, 0.5)
+    ew = g.math("MINIMUM", g.math("MULTIPLY", g.edge(0.014), 0.9 * V18_WEAR), 1.0)
+    paint = g.mix(g.mapr(mott, 0.3, 0.7, 0.0, 1.0), V18_rgba(base, 0.85), V18_rgba(base, 1.25))
+    col = g.mix(ew, paint, (0.52, 0.54, 0.57, 1.0))
+    r = g.lerpf(ew, g.mapr(peel, 0.3, 0.7, 0.30, 0.46), 0.28)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.06, 0.4, 0.55, 24.0))
+    g.setv("Base Color", col)
+    g.setv("Metallic", ew)
+    g.setv("Roughness", r)
+    g.setv("Coat Weight", 0.10)
+    g.setv("Coat Roughness", 0.22)
+    g.bump(peel, 0.03, 0.004)
+    g.bump(scr, 0.008, 0.002)
+
+
+def V18_SURFACE_pcb(g, base):
+    P = g.obj
+    vo = g.N.new("ShaderNodeTexVoronoi")
+    vo.feature = "DISTANCE_TO_EDGE"
+    g.Lk.new(g.scl(P, 5.0), vo.inputs["Vector"])
+    trace = g.ramp(vo.outputs["Distance"], [(0.0, V18_rgba(base, 1.9)), (0.05, V18_rgba(base, 1.0))], "CONSTANT")
+    vp = g.N.new("ShaderNodeTexVoronoi")
+    g.Lk.new(g.scl(P, 22.0), vp.inputs["Vector"])
+    pad = g.ramp(vp.outputs["Distance"], [(0.0, (1, 1, 1, 1)), (0.075, (0, 0, 0, 1))], "CONSTANT")
+    mott = g.noise(g.scl(P, 40.0), 1.0, 5.0, 0.6)
+    col = g.mix(g.mapr(mott, 0.3, 0.7, 0.0, 0.5), trace, V18_rgba(base, 0.7))
+    col = g.mix(pad, col, (0.62, 0.42, 0.10, 1.0))                            # almohadillas doradas
+    r = g.lerpf(pad, g.mapr(mott, 0.3, 0.7, 0.28, 0.40), 0.20)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.04, 0.3, 0.5, 30.0))
+    g.setv("Base Color", col)
+    g.setv("Metallic", pad)
+    g.setv("Roughness", r)
+    g.setv("Coat Weight", 0.20)
+    g.setv("Coat Roughness", 0.20)
+    g.bump(g.noise(g.scl(P, 380.0), 1.0, 2.0, 0.5), 0.015, 0.003)
+    g.bump(vo.outputs["Distance"], 0.10, 0.004)
+
+
+def V18_SURFACE_ic(g, base):
+    V18_SURFACE_plastic(g, (0.004, 0.005, 0.007), rough=0.42, grain=620.0, dust=0.03, wear=0.2, drift=0.10)
+
+
+def V18_SURFACE_rubber(g, base):
+    P = g.obj
+    n1 = g.noise(g.scl(P, 140.0), 1.0, 3.0, 0.6)
+    n2 = g.noise(g.scl(P, 420.0), 1.0, 2.0, 0.5)
+    col = g.mix(n1, V18_rgba(base, 0.8), V18_rgba(base, 1.3))
+    r = g.mapr(n1, 0.3, 0.7, 0.70, 0.88)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.06, 0.4, 0.5, 24.0))
+    g.setv("Base Color", col)
+    g.setv("Roughness", r)
+    g.setv("Metallic", 0.0)
+    g.bump(n1, 0.10, 0.004)
+    g.bump(n2, 0.05, 0.002)
+
+
+def V18_SURFACE_screw(g, base, brass=False):
+    """Cada tornillo es distinto: brillo, rugosidad y rayas radiales aleatorias por objeto."""
+    P = g.obj
+    grad = g.N.new("ShaderNodeTexGradient")
+    grad.gradient_type = "RADIAL"
+    g.Lk.new(P, grad.inputs["Vector"])
+    ang = grad.outputs["Fac"]
+    vec = g.comb(g.math("MULTIPLY", ang, 70.0), g.mapr(g.rand, 0, 1, 0, 50), 0.0)
+    rad = g.noise(vec, 1.0, 3.0, 0.6)
+    rv = g.mapr(g.rand, 0, 1, 0, 1)
+    tint = g.mix(rv, V18_rgba(base, 0.78), V18_rgba(base, 1.10))
+    ed = g.math("MULTIPLY", g.edge(0.006), 0.8 * V18_WEAR, True)
+    col = g.mix(rad, tint, V18_rgba(base, 1.25))
+    col = g.mix(ed, col, V18_rgba(base, 1.6))
+    r = g.math("ADD", g.mapr(rad, 0.3, 0.7, 0.18, 0.40), g.mapr(g.rand, 0, 1, 0.0, 0.12))
+    col, r = g.finish_dust(col, r, g.dust_mask(0.05, 0.2, 0.5, 60.0))
+    g.setv("Base Color", col)
+    g.setv("Metallic", 1.0)
+    g.setv("Roughness", r)
+    g.bump(rad, 0.08, 0.002)
+
+
+def V18_SURFACE_glass(g, base):
+    P = g.obj
+    n = g.noise(g.scl(P, 180.0), 1.0, 3.0, 0.6)
+    sm = g.mapr(g.noise(g.scl(P, 3.5), 1.0, 3.0, 0.6), 0.55, 0.8, 0.0, 0.05)  # huellas / vaho
+    g.setv("Base Color", V18_rgba(base, 1.0))
+    g.setv("Roughness", g.math("ADD", g.mapr(n, 0.3, 0.7, 0.012, 0.03), sm))
+    g.setv("Metallic", 0.0)
+    g.setv("Transmission Weight", 1.0)
+    g.setv("IOR", 1.45)
+    g.bump(n, 0.004, 0.0005)
+
+
+def V18_SURFACE_screen(g, glow, strength=1.6, grid=60.0, wscale=26.0, nscale=2.5, plane="XZY"):
+    """Capas: panel negro + cristal con reflejo (coat) + imagen emisiva con barrido y subpixel."""
+    P = g.swz(g.obj, plane)
+    sc = g.noise(g.scl(P, nscale), 1.0, 6.0, 0.6)
+    img = g.ramp(sc, [(0.35, (0.0, 0.03, 0.08, 1)), (0.65, (glow[0], glow[1], glow[2], 1))])
+    wv = g.N.new("ShaderNodeTexWave")
+    wv.wave_type = "BANDS"
+    wv.bands_direction = "Y"
+    g.Lk.new(g.scl(P, 1.0), wv.inputs["Vector"])
+    wv.inputs["Scale"].default_value = wscale
+    scan = g.ramp(wv.outputs["Fac"], [(0.0, (0.60, 0.60, 0.60, 1)), (0.5, (1, 1, 1, 1))])
+    ck = g.N.new("ShaderNodeTexChecker")
+    g.Lk.new(g.scl(P, 1.0), ck.inputs["Vector"])
+    ck.inputs["Scale"].default_value = grid
+    ck.inputs["Color1"].default_value = (0.82, 0.82, 0.82, 1)
+    ck.inputs["Color2"].default_value = (1.0, 1.0, 1.0, 1)
+    emis = g.mix(1.0, img, scan, "MULTIPLY")
+    emis = g.mix(0.35, emis, ck.outputs["Color"], "MULTIPLY")
+    smud = g.mapr(g.noise(g.scl(P, 3.0), 1.0, 3.0, 0.6), 0.55, 0.8, 0.0, 0.07)
+    g.setv("Base Color", (0.002, 0.003, 0.004, 1))
+    g.setv("Metallic", 0.0)
+    g.setv("Roughness", g.math("ADD", 0.05, smud))
+    g.setv("Coat Weight", 1.0)
+    g.setv("Coat Roughness", 0.035)
+    g.setv("IOR", 1.5)
+    g.setv("Emission Color", emis)
+    g.setv("Emission Strength", strength)
+    g.bump(g.noise(g.scl(P, 260.0), 1.0, 2.0, 0.5), 0.006, 0.0002)
+
+
+def V18_SURFACE_led(g, color, strength):
+    g.setv("Base Color", V18_rgba(color, 0.05))
+    g.setv("Roughness", 0.35)
+    g.setv("Metallic", 0.0)
+    g.setv("Coat Weight", 0.3)
+    g.setv("Emission Color", (color[0], color[1], color[2], 1.0))
+    g.setv("Emission Strength", strength)
+
+
+def V18_SURFACE_lightpanel(g):
+    P = g.obj
+    n = g.mapr(g.noise(g.scl(P, 1.5), 1.0, 3.0, 0.5), 0.3, 0.7, 0.88, 1.0)
+    col = g.mix(n, (0.93, 0.96, 1.0, 1.0), (1.0, 1.0, 1.0, 1.0))
+    g.setv("Base Color", (0.8, 0.8, 0.8, 1))
+    g.setv("Roughness", 0.5)
+    g.setv("Emission Color", col)
+    g.setv("Emission Strength", 6.0)
+
+
+def V18_SURFACE_hazard(g, base):
+    P = g.obj
+    wv = g.N.new("ShaderNodeTexWave")
+    wv.wave_type = "BANDS"
+    wv.bands_direction = "DIAGONAL"
+    g.Lk.new(g.scl(P, 1.0), wv.inputs["Vector"])
+    wv.inputs["Scale"].default_value = 6.0
+    col = g.ramp(wv.outputs["Fac"], [(0.0, (0.85, 0.58, 0.02, 1)), (0.5, (0.02, 0.02, 0.02, 1))], "CONSTANT")
+    n = g.noise(g.scl(P, 7.0), 1.0, 4.0, 0.6)
+    r = g.mapr(n, 0.3, 0.7, 0.40, 0.62)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.30, 0.3, 0.5, 14.0))        # pisadas / polvo
+    g.setv("Base Color", col)
+    g.setv("Roughness", r)
+    g.setv("Metallic", 0.0)
+    g.bump(g.noise(g.scl(P, 220.0), 1.0, 2.0, 0.6), 0.05, 0.004)
+
+
+def V18_SURFACE_keys(g, base):
+    P = g.obj
+    ck = g.N.new("ShaderNodeTexChecker")
+    g.Lk.new(g.scl(P, 1.0), ck.inputs["Vector"])
+    ck.inputs["Scale"].default_value = 30.0
+    ck.inputs["Color1"].default_value = V18_rgba(base, 1.8)
+    ck.inputs["Color2"].default_value = V18_rgba(base, 0.4)
+    shine = g.mapr(g.noise(g.scl(P, 55.0), 1.0, 3.0, 0.6), 0.4, 0.75, 0.38, 0.22)   # teclas usadas brillan
+    g.setv("Base Color", ck.outputs["Color"])
+    g.setv("Roughness", shine)
+    g.setv("Metallic", 0.0)
+    g.bump(ck.outputs["Fac"], 0.5, 0.01)
+    g.bump(g.noise(g.scl(P, 400.0), 1.0, 2.0, 0.5), 0.03, 0.002)
+
+
+def V18_SURFACE_perf(g, base):
+    P = g.obj
+    vo = g.N.new("ShaderNodeTexVoronoi")
+    vo.feature = "F1"
+    g.Lk.new(g.scl(P, 1.0), vo.inputs["Vector"])
+    vo.inputs["Scale"].default_value = 28.0
+    vo.inputs["Randomness"].default_value = 0.0
+    col = g.ramp(vo.outputs["Distance"], [(0.0, (0.003, 0.004, 0.005, 1)), (0.33, V18_rgba(base))], "CONSTANT")
+    n = g.noise(g.scl(P, (2.0, 140.0, 140.0)), 1.0, 3.0, 0.6)
+    g.setv("Base Color", col)
+    g.setv("Metallic", 1.0)
+    g.setv("Roughness", g.mapr(n, 0.3, 0.7, 0.24, 0.38))
+    g.bump(vo.outputs["Distance"], 0.5, 0.02)
+    g.bump(n, 0.03, 0.003)
+
+
+def V18_SURFACE_fabric(g, base):
+    P = g.obj
+    ck = g.N.new("ShaderNodeTexChecker")
+    g.Lk.new(g.scl(P, 1.0), ck.inputs["Vector"])
+    ck.inputs["Scale"].default_value = 420.0
+    ck.inputs["Color1"].default_value = (0.85, 0.85, 0.85, 1)
+    ck.inputs["Color2"].default_value = (1.0, 1.0, 1.0, 1)
+    n = g.noise(g.scl(P, 500.0), 2.0, 0.7)
+    col = g.mix(0.5, g.mix(n, V18_rgba(base, 0.7), V18_rgba(base, 1.3)), ck.outputs["Color"], "MULTIPLY")
+    g.setv("Base Color", col)
+    g.setv("Roughness", 0.92)
+    g.setv("Metallic", 0.0)
+    g.setv("Sheen Weight", 0.35)
+    g.bump(ck.outputs["Fac"], 0.3, 0.004)
+    g.bump(n, 0.5, 0.003)
+
+
+def V18_SURFACE_sticker(g, base):
+    P = g.obj
+    wv = g.N.new("ShaderNodeTexWave")
+    wv.wave_type = "BANDS"
+    wv.bands_direction = "X"
+    g.Lk.new(g.scl(P, 1.0), wv.inputs["Vector"])
+    wv.inputs["Scale"].default_value = 60.0
+    wv.inputs["Distortion"].default_value = 2.5
+    ink = g.ramp(wv.outputs["Fac"], [(0.0, (0.02, 0.02, 0.02, 1)), (0.5, (0.86, 0.86, 0.82, 1))], "CONSTANT")
+    g.setv("Base Color", ink)
+    g.setv("Roughness", g.mapr(g.noise(g.scl(P, 140.0), 1.0, 3.0, 0.5), 0.3, 0.7, 0.42, 0.56))
+    g.setv("Metallic", 0.0)
+    g.bump(g.noise(g.scl(P, 300.0), 1.0, 2.0, 0.5), 0.02, 0.001)
+
+
+def V18_SURFACE_paste(g, base, dry):
+    P = g.obj
+    if dry:
+        vo = g.N.new("ShaderNodeTexVoronoi")
+        g.Lk.new(g.scl(P, 40.0), vo.inputs["Vector"])
+        g.setv("Base Color", g.mix(g.noise(g.scl(P, 15.0), 1.0, 4.0, 0.6), V18_rgba(base, 0.7), V18_rgba(base, 1.2)))
+        g.setv("Roughness", 0.86)
+        g.setv("Metallic", 0.05)
+        g.bump(vo.outputs["Distance"], 0.5, 0.01)
+    else:
+        g.setv("Base Color", V18_rgba(base, 1.0))
+        g.setv("Roughness", g.mapr(g.noise(g.scl(P, 60.0), 1.0, 3.0, 0.5), 0.3, 0.7, 0.22, 0.34))
+        g.setv("Metallic", 0.35)
+        g.bump(g.noise(g.scl(P, 80.0), 1.0, 3.0, 0.5), 0.05, 0.002)
+
+
+def V18_SURFACE_silk(g, base):
+    P = g.obj
+    g.setv("Base Color", g.mix(g.noise(g.scl(P, 120.0), 1.0, 3.0, 0.5), V18_rgba(base, 0.85), V18_rgba(base, 1.1)))
+    g.setv("Roughness", 0.5)
+    g.setv("Metallic", 0.0)
+    g.bump(g.noise(g.scl(P, 500.0), 1.0, 2.0, 0.5), 0.02, 0.001)
+
+
+def V18_SURFACE_cable(g, base):
+    P = g.obj
+    n1 = g.noise(g.scl(P, 140.0), 1.0, 3.0, 0.6)
+    n2 = g.noise(g.scl(P, (2.0, 60.0, 60.0)), 1.0, 2.0, 0.5)
+    col = g.mix(g.mapr(g.rand, 0, 1, 0, 1), V18_rgba(base, 0.88), V18_rgba(base, 1.12))
+    col = g.mix(g.mapr(n1, 0.3, 0.7, 0.0, 0.4), col, V18_rgba(base, 0.7))
+    r = g.mapr(n1, 0.3, 0.7, 0.42, 0.60)
+    col, r = g.finish_dust(col, r, g.dust_mask(0.05, 0.3, 0.6, 30.0))
+    g.setv("Base Color", col)
+    g.setv("Roughness", r)
+    g.setv("Metallic", 0.0)
+    g.setv("Coat Weight", 0.08)
+    g.setv("Coat Roughness", 0.3)
+    g.bump(n1, 0.06, 0.004)
+    g.bump(n2, 0.03, 0.003)
+
+
+# ============================================================
+# 4. CLASIFICACION DE MATERIALES EXISTENTES
+# ============================================================
+
+V18_LED_COLORS = {
+    "cyan": ((0.0, 0.70, 1.0), 3.2), "blue": ((0.02, 0.18, 1.0), 3.2),
+    "green": ((0.0, 1.0, 0.18), 2.8), "red": ((1.0, 0.015, 0.008), 2.8),
+    "amber": ((1.0, 0.30, 0.01), 3.0), "violet": ((0.55, 0.08, 1.0), 3.0),
+}
+
+
+def V18_PHOTO_classify(name):
+    n = name.lower()
+
+    def has(*k):
+        return any(x in n for x in k)
+
+    if has("silkscreen"):
+        return "silk"
+    if has("screen"):
+        return "screen"
+    if n == "lcd":
+        return "lcd"
+    if n.startswith("led"):
+        return "led"
+    if n == "label white":
+        return "label"
+    if has("fr4 edge"):
+        return "fr4edge"
+    if has("pcb", "fr4", "solder mask"):
+        return "pcb"
+    if has("copper"):
+        return "copper"
+    if has("enig", "gold"):
+        return "gold"
+    if has("solder", "sac "):
+        return "solder"
+    if has("ic black", "ic package", "silicon"):
+        return "ic"
+    if has("thermal paste", "paste new"):
+        return "paste_new"
+    if has("paste dry"):
+        return "paste_dry"
+    if has("cpu ihs"):
+        return "ihs"
+    if has("storage housing", "anodized"):
+        return "anodized"
+    if has("aluminum", "alu"):
+        return "aluminum"
+    if has("steel"):
+        return "steel"
+    if has("perforated"):
+        return "perf"
+    if has("rubber"):
+        return "rubber"
+    if has("hazard"):
+        return "hazard"
+    if has("keyboard"):
+        return "keys"
+    if has("fabric"):
+        return "fabric"
+    if has("barcode"):
+        return "sticker"
+    if has("glass"):
+        return "glass"
+    if has("floor tile"):
+        return "floor_tile"
+    if has("floor"):
+        return "floor"
+    if has("wall panel side"):
+        return "wall_side"
+    if has("wall panel back"):
+        return "wall_back"
+    if has("ceiling"):
+        return "ceiling"
+    if has("hp black", "abs", "plastic"):
+        return "plastic"
+    return None
+
+
+def V18_PHOTO_build(g, kind, base, name):
+    n = name.lower()
+    if kind == "floor":
+        V18_SURFACE_floor(g, base, False)
+    elif kind == "floor_tile":
+        V18_SURFACE_floor(g, base, True)
+    elif kind == "wall_side":
+        V18_SURFACE_wall(g, base, "YZX")
+    elif kind == "wall_back":
+        V18_SURFACE_wall(g, base, "XZY")
+    elif kind == "ceiling":
+        V18_SURFACE_wall(g, base, "XYZ", 3.0, 3.0, True)
+    elif kind == "steel":
+        V18_SURFACE_metal(g, base, 0.26, (2.0, 110.0, 110.0), 0.5, 0.05, 0.0, 0.05)
+    elif kind == "aluminum":
+        V18_SURFACE_metal(g, base, 0.21, (2.0, 130.0, 130.0), 0.6, 0.04, 0.0, 0.06)
+    elif kind == "anodized":
+        V18_SURFACE_metal(g, base, 0.30, (30.0, 30.0, 30.0), 0.7, 0.05, 0.0, 0.03, 0.9)
+    elif kind == "ihs":
+        V18_SURFACE_metal(g, base, 0.17, (45.0, 45.0, 45.0), 0.4, 0.02, 0.0, 0.0)
+    elif kind == "copper":
+        V18_SURFACE_metal(g, base, 0.24, (50.0, 50.0, 50.0), 0.3, 0.02, 0.6, 0.0)
+    elif kind == "gold":
+        V18_SURFACE_metal(g, base, 0.18, (70.0, 70.0, 70.0), 0.2, 0.01, 0.0, 0.0)
+    elif kind == "solder":
+        V18_SURFACE_metal(g, base, 0.30, (35.0, 35.0, 35.0), 0.2, 0.02, 0.2, 0.0)
+    elif kind == "perf":
+        V18_SURFACE_perf(g, base)
+    elif kind == "plastic":
+        if "hp black" in n or "abs" in n:
+            V18_SURFACE_plastic(g, base, 0.34, 520.0, 0.05, 0.35, 0.12, 0.05)
+        else:
+            V18_SURFACE_plastic(g, base, 0.38, 480.0, 0.04, 0.30, 0.14, 0.12)
+    elif kind == "rubber":
+        V18_SURFACE_rubber(g, base)
+    elif kind == "pcb":
+        V18_SURFACE_pcb(g, base)
+    elif kind == "ic":
+        V18_SURFACE_ic(g, base)
+    elif kind == "silk":
+        V18_SURFACE_silk(g, base)
+    elif kind == "fr4edge":
+        V18_SURFACE_plastic(g, (0.03, 0.04, 0.03), 0.6, 600.0, 0.02, 0.1, 0.1, 0.0)
+    elif kind == "glass":
+        V18_SURFACE_glass(g, base)
+    elif kind == "screen":
+        if "big" in n:
+            V18_SURFACE_screen(g, (0.0, 0.50, 1.0), 1.3, 18.0, 5.0, 1.0)
+        elif "hud" in n:
+            V18_SURFACE_screen(g, (0.0, 0.62, 1.0), 1.3, 28.0, 9.0, 1.5)
+        else:
+            V18_SURFACE_screen(g, (0.0, 0.45, 1.0), 1.6, 60.0, 26.0, 2.5)
+    elif kind == "lcd":
+        V18_SURFACE_screen(g, (0.45, 0.75, 0.40), 0.8, 90.0, 40.0, 4.0)
+    elif kind == "led":
+        key = [c for c in V18_LED_COLORS if c in n]
+        col, st = V18_LED_COLORS[key[0]] if key else ((0.5, 0.8, 1.0), 3.0)
+        V18_SURFACE_led(g, col, st)
+    elif kind == "label":
+        V18_SURFACE_led(g, (0.70, 0.84, 1.0), 2.0)
+    elif kind == "hazard":
+        V18_SURFACE_hazard(g, base)
+    elif kind == "keys":
+        V18_SURFACE_keys(g, base)
+    elif kind == "fabric":
+        V18_SURFACE_fabric(g, base)
+    elif kind == "sticker":
+        V18_SURFACE_sticker(g, base)
+    elif kind == "paste_new":
+        V18_SURFACE_paste(g, base, False)
+    elif kind == "paste_dry":
+        V18_SURFACE_paste(g, base, True)
+    else:
+        raise ValueError("categoria sin receta: %s" % kind)
+
+
+def V18_PHOTO_fallback(mat, base):
+    """Si una receta falla, el material queda como un Principled simple (nunca roto)."""
+    try:
+        mat.use_nodes = True
+        nt = mat.node_tree
+        nt.nodes.clear()
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        bs = nt.nodes.new("ShaderNodeBsdfPrincipled")
+        nt.links.new(bs.outputs["BSDF"], out.inputs["Surface"])
+        bs.inputs["Base Color"].default_value = (base[0], base[1], base[2], 1.0)
+        bs.inputs["Roughness"].default_value = 0.4
+    except Exception:
+        pass
+
+
+def V18_PHOTO_rebuild_materials():
+    for m in list(bpy.data.materials):
+        if m.users == 0 and not m.use_fake_user:
+            continue
+        if m.name.startswith("V18_MAT_"):
+            continue
+        kind = V18_PHOTO_classify(m.name)
+        base = tuple(m.diffuse_color[:3])
+        if kind is None:
+            V18_LOG["unknown"].append(m.name)
+            continue
+        try:
+            V18_PHOTO_build(V18_G(m), kind, base, m.name)
+            V18_LOG["ok"] += 1
+        except Exception as e:
+            V18_LOG["fail"].append((m.name, str(e)))
+            V18_PHOTO_fallback(m, base)
+
+
+V18_PHOTO_rebuild_materials()
+
+
+# ============================================================
+# 5. MATERIALES ESPECIFICOS POR OBJETO (tornillos, chapa HP, cables, luminarias)
+# ============================================================
+
+V18_CACHE = {}
+
+
+def V18_PHOTO_special(name, builder, *args):
+    m = V18_CACHE.get(name)
+    if m:
+        return m
+    m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    try:
+        builder(V18_G(m), *args)
+    except Exception as e:
+        V18_LOG["fail"].append((name, str(e)))
+        V18_PHOTO_fallback(m, (0.2, 0.2, 0.2))
+    V18_CACHE[name] = m
+    return m
+
+
+def V18_PHOTO_assign(o, m):
+    if o.type not in ("MESH", "CURVE", "FONT"):
+        return
+    o.data.materials.clear()
+    o.data.materials.append(m)
+    V18_LOG["overrides"] += 1
+
+
+def V18_PHOTO_apply_overrides():
+    zinc = V18_PHOTO_special("V18_MAT_Screw_Zinc", V18_SURFACE_screw, (0.64, 0.66, 0.69), False)
+    brass = V18_PHOTO_special("V18_MAT_Screw_Brass", V18_SURFACE_screw, (0.62, 0.40, 0.10), True)
+    panel = V18_PHOTO_special("V18_MAT_CeilingLight", V18_SURFACE_lightpanel)
+    paint = V18_PHOTO_special("V18_MAT_HP_PaintedSteel", V18_SURFACE_paint_steel, (0.011, 0.012, 0.015))
+    bezel = V18_PHOTO_special("V18_MAT_HP_Bezel", V18_SURFACE_plastic, (0.010, 0.011, 0.014),
+                              0.30, 540.0, 0.05, 0.40, 0.10, 0.06)
+
+    for o in list(scene.objects):
+        n = o.name.upper()
+        if o.type == "MESH":
+            if ("SCREW" in n or "BOLT" in n) and "SLOT" not in n:
+                V18_PHOTO_assign(o, brass if n in ("SCREW", "STORAGE_SCREW") else zinc)
+            elif n == "LIGHT_PANEL":
+                V18_PHOTO_assign(o, panel)
+            elif n.startswith("HP_PC_WALL") or n == "HP_LID":
+                V18_PHOTO_assign(o, paint)
+            elif n == "HP_PC_FRONT_PANEL":
+                V18_PHOTO_assign(o, bezel)
+        elif o.type == "CURVE" and o.data.materials:
+            src = o.data.materials[0]
+            if src is None or src.name.startswith("V18_MAT_"):
+                continue
+            kind = V18_PHOTO_classify(src.name)
+            if kind in ("plastic", "rubber"):
+                base = tuple(src.diffuse_color[:3])
+                key = "V18_MAT_Cable_%02d%02d%02d" % tuple(int(round(c * 99)) for c in base)
+                V18_PHOTO_assign(o, V18_PHOTO_special(key, V18_SURFACE_cable, base))
+
+
+V18_PHOTO_apply_overrides()
+
+
+# ============================================================
+# 6. LIMPIEZA SEGURA DE GEOMETRIA (sin cambiar la forma)
+# ============================================================
+
+def V18_PHOTO_cleanup():
+    removed = fixed = 0
+    for o in scene.objects:
+        if o.type != "MESH":
+            continue
+        # V14 agrego un segundo Bevel encima del original -> doble biselado y mas carga: se quita el duplicado.
+        base_bevel = o.modifiers.get("Bevel")
+        extra = o.modifiers.get("V14_REAL_EDGE_BEVEL")
+        if base_bevel and extra:
+            o.modifiers.remove(extra)
+            removed += 1
+        # Evita bandas de sombra (terminator) en cilindros, toroides y esferas de baja resolucion.
+        if any(k in o.name.upper() for k in ("FAN", "KNOB", "WHEEL", "CAN", "BOTTLE", "RING", "HUB", "COLUMN", "PIPE", "DUCT")):
+            try:
+                o.cycles.shadow_terminator_geometry_offset = 0.1
+                fixed += 1
+            except Exception:
+                try:
+                    o.shadow_terminator_geometry_offset = 0.1
+                    fixed += 1
+                except Exception:
+                    pass
+    print("V18: biseles duplicados eliminados:", removed, "| objetos con terminator corregido:", fixed)
+
+
+V18_PHOTO_cleanup()
+
+
+# ============================================================
+# 7. ILUMINACION (rebalanceo fotografico, sin mover luces)
+# ============================================================
+
+V18_LIGHTS = {
+    # nombre: (energia W, color, tamano o None)
+    "KEY_LIGHT": (900, (1.0, 0.965, 0.92), 7.5),
+    "FILL_LIGHT": (130, (0.76, 0.82, 0.92), 8.5),
+    "BACK_LIGHT": (260, (0.45, 0.58, 0.82), 6.5),
+    "HERO_KEY": (1050, (1.0, 0.98, 0.94), 4.0),
+    "HERO_TOP": (500, (1.0, 0.97, 0.91), 3.4),
+    "HERO_RIM": (280, (0.26, 0.42, 1.0), 3.8),
+    "V14_SOFTBOX": (500, (1.0, 0.985, 0.96), 7.0),
+    "V14_RIM_SOFT": (230, (0.36, 0.55, 1.0), 5.5),
+    "ACCENT_AMBER": (60, (1.0, 0.52, 0.20), None),
+    "ACCENT_VIOLET": (36, (0.62, 0.38, 1.0), None),
+    "ACCENT_TEAL": (42, (0.18, 0.68, 0.74), None),
+}
+
+
+def V18_PHOTO_lights():
+    for o in scene.objects:
+        if o.type != "LIGHT":
+            continue
+        n = o.name
+        if n in V18_LIGHTS:
+            e, c, s = V18_LIGHTS[n]
+            o.data.energy = e * V18_LIGHT_GAIN
+            o.data.color = c
+            if s is not None and o.data.type == "AREA":
+                o.data.size = s
+        elif n.startswith("CEILING_PRACTICAL"):
+            # los paneles del techo ahora emiten luz real; el area light solo aporta relleno suave
+            o.data.energy = 70 * V18_LIGHT_GAIN
+            o.data.color = (0.90, 0.95, 1.0)
+        elif n.startswith("SERVER_PRACTICAL"):
+            o.data.energy = 8 * V18_LIGHT_GAIN
+            o.data.color = (0.20, 0.38, 1.0)
+            o.data.shadow_soft_size = 0.2
+        try:
+            o.data.use_shadow = True
+        except Exception:
+            pass
+
+
+V18_PHOTO_lights()
+
+
+# ============================================================
+# 8. CAMARAS (solo DOF, enfoque y clipping; composicion intacta)
+# ============================================================
+
+def V18_PHOTO_cameras():
+    plan = {"CAMERA_MASTER": (32.0, 8.0, "HP_PC_FLOOR"),
+            "CAMERA_HERO_PC": (52.0, 5.6, "HP_MOTHERBOARD"),
+            "CAMERA_WIDE": (28.0, 9.0, "HP_PC_FLOOR")}
+    for name, (lens, fstop, focus) in plan.items():
+        cam = bpy.data.objects.get(name)
+        if not cam or cam.type != "CAMERA":
+            continue
+        cam.data.lens = lens
+        cam.data.sensor_width = 36.0
+        cam.data.clip_start = 0.1
+        cam.data.clip_end = 200.0
+        cam.data.dof.use_dof = True
+        cam.data.dof.aperture_fstop = fstop
+        f = bpy.data.objects.get(focus)
+        if f:
+            cam.data.dof.focus_object = f
+
+
+V18_PHOTO_cameras()
+
+
+# ============================================================
+# 9. MUNDO, COLOR, GLOW Y RENDER (RTX / OptiX)
+# ============================================================
+
+def V18_PHOTO_world_color():
+    try:
+        w = scene.world
+        w.use_nodes = True
+        bg = w.node_tree.nodes.get("Background")
+        if bg:
+            bg.inputs["Color"].default_value = (0.006, 0.009, 0.015, 1.0)
+            bg.inputs["Strength"].default_value = 0.12
+        vol = w.node_tree.nodes.get("V153_SUBTLE_ATMOSPHERE")
+        if vol:
+            vol.inputs["Density"].default_value = 0.0012        # practicamente imperceptible
+    except Exception as e:
+        print("V18 mundo:", e)
+    vs = scene.view_settings
+    try:
+        vs.view_transform = "AgX"
+    except Exception:
+        pass
+    for look in ("AgX - Base Contrast", "Base Contrast", "None"):
+        try:
+            vs.look = look
+            break
+        except Exception:
+            continue
+    try:
+        vs.exposure = V18_EXPOSURE
+        vs.gamma = 1.0
+    except Exception:
+        pass
+
+
+def V18_PHOTO_tune_glare():
+    """Bloom solo para LEDs/pantallas muy brillantes: umbral alto, mezcla casi nula."""
+    trees = []
+    try:
+        if getattr(scene, "compositing_node_group", None):
+            trees.append(scene.compositing_node_group)
+    except Exception:
+        pass
+    try:
+        if scene.node_tree:
+            trees.append(scene.node_tree)
+    except Exception:
+        pass
+    for t in trees:
+        for nd in t.nodes:
+            if nd.bl_idname != "CompositorNodeGlare":
+                continue
+            for fn in (lambda: setattr(nd, "threshold", 3.0),
+                       lambda: setattr(nd, "mix", -0.93),
+                       lambda: setattr(nd.inputs["Threshold"], "default_value", 3.0),
+                       lambda: setattr(nd.inputs["Strength"], "default_value", 0.12)):
+                try:
+                    fn()
+                except Exception:
+                    pass
+
+
+def V18_PHOTO_render():
+    r = scene.render
+    r.resolution_x, r.resolution_y = (3840, 2160) if V18_FINAL else (1920, 1080)
+    r.resolution_percentage = 100
+    r.image_settings.file_format = "PNG"
+    try:
+        r.image_settings.color_depth = "16"
+    except Exception:
+        pass
+    if V18_ENGINE == "CYCLES":
+        try:
+            prefs = bpy.context.preferences.addons["cycles"].preferences
+            for dev_type in ("OPTIX", "CUDA"):
+                try:
+                    prefs.compute_device_type = dev_type
+                    prefs.get_devices()
+                    break
+                except Exception:
+                    continue
+            for d in prefs.devices:
+                d.use = (d.type != "CPU")
+        except Exception as e:
+            print("V18 GPU:", e)
+        r.engine = "CYCLES"
+        cy = scene.cycles
+        for attr, val in (("device", "GPU"),
+                          ("samples", V18_SAMPLES if V18_FINAL else 96),
+                          ("use_adaptive_sampling", True), ("adaptive_threshold", 0.008),
+                          ("use_denoising", True),
+                          ("max_bounces", 12), ("diffuse_bounces", 4), ("glossy_bounces", 6),
+                          ("transmission_bounces", 10), ("transparent_max_bounces", 8),
+                          ("volume_bounces", 2),
+                          ("caustics_reflective", False), ("caustics_refractive", False),
+                          ("sample_clamp_indirect", 8.0), ("use_light_tree", True)):
+            try:
+                setattr(cy, attr, val)
+            except Exception:
+                pass
+        try:
+            cy.denoiser = "OPTIX"
+        except Exception:
+            try:
+                cy.denoiser = "OPENIMAGEDENOISE"
+            except Exception:
+                pass
+    else:
+        for eng in ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"):
+            try:
+                r.engine = eng
+                break
+            except Exception:
+                continue
+        ev = scene.eevee
+        for attr, val in (("use_raytracing", True),
+                          ("taa_render_samples", 256 if V18_FINAL else 48),
+                          ("shadow_ray_count", 4), ("shadow_step_count", 12)):
+            try:
+                setattr(ev, attr, val)
+            except Exception:
+                pass
+        try:
+            ev.ray_tracing_options.resolution_scale = "1"
+        except Exception:
+            pass
+    scene.frame_start = scene.frame_end = 1
+
+
+V18_PHOTO_world_color()
+V18_PHOTO_tune_glare()
+V18_PHOTO_render()
+bpy.context.view_layer.update()
+
+
+# ============================================================
+# 10. VERIFICACION FINAL
+# ============================================================
+
+def V18_PHOTO_verify():
+    print("=" * 70)
+    print("V18 PHOTOREAL LAYER - RESULTADO")
+    print("=" * 70)
+    print("  materiales reconstruidos:", V18_LOG["ok"])
+    print("  overrides por objeto (tornillos/HP/cables/luminarias):", V18_LOG["overrides"])
+    if V18_LOG["fail"]:
+        print("  RECETAS CON ERROR (quedaron en fallback simple):")
+        for n, e in V18_LOG["fail"]:
+            print("    -", n, "->", e)
+    if V18_LOG["unknown"]:
+        print("  materiales sin categoria (no se tocaron):", V18_LOG["unknown"])
+    empty = [o.name for o in scene.objects if o.type in ("MESH", "CURVE", "FONT") and
+             (not o.data.materials or any(m is None for m in o.data.materials))]
+    print("  objetos sin material:", empty[:8] if empty else "ninguno")
+    required = ["HP_PC_FLOOR", "HP_MOTHERBOARD", "HP_CPU", "HP_COOLER_PLATE", "HP_SODIMM_4GB",
+                "HP_STORAGE_2_5", "HP_ODD", "HP_LID", "HP_FAN_ROTOR", "HP_LID_HINGE"]
+    miss = [n for n in required if not bpy.data.objects.get(n)]
+    print("  escena original intacta:", "SI" if not miss else "FALTAN %s" % miss)
+    print("  motor:", scene.render.engine, "| resolucion:", scene.render.resolution_x, "x", scene.render.resolution_y,
+          "| exposicion:", V18_EXPOSURE)
+    print("  camara activa:", scene.camera.name if scene.camera else "NINGUNA")
+    print("  TIP: haz un render de prueba con V18_FINAL=False (1080p) y ajusta V18_EXPOSURE si hace falta.")
+    print("=" * 70)
+
+
+V18_PHOTO_verify()
+
+try:
+    if bpy.data.is_saved:
+        out_path = os.path.join(os.path.dirname(bpy.data.filepath), "IT_SUPPORT_THE_LAB_V18_PHOTOREAL.blend")
+        bpy.ops.wm.save_as_mainfile(filepath=out_path, copy=True)
+        print("Copia guardada en:", out_path)
+except Exception as e:
+    print("No se pudo guardar copia:", e)
