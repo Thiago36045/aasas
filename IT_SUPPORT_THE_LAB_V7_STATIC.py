@@ -1182,18 +1182,9 @@ paste_new.hide_render = False
 
 rotor.rotation_euler = (0, 0, 0)
 
-LABELS = [
-    ("CPU", "INTEL CPU", (-1.0, 0.35, 0.52), (-3.5, 0.35, 2.7), 110),
-    ("GFX", "INTEL HD GRAPHICS", (-1.0, 0.6, 0.34), (-3.5, 0.6, 2.2), 122),
-    ("FAN", "COOLING FAN", (-1.0, -0.95, 0.42), (-3.5, -0.95, 1.7), 134),
-    ("RAM", "4 GB RAM", (0.03, -1.0, 0.37), (0.0, -3.3, 1.9), 146),
-    ("ODD", "SLIM DVD", (1.425, -1.25, 0.45), (3.5, -1.25, 1.5), 158),
-    ("HDD", "STORAGE 2.5 IN", (1.45, 0.75, 0.33), (3.5, 0.75, 2.4), 170),
-]
-for key, body, anchor, pos, _frame_on in LABELS:
-    t = text("HP_LABEL_" + key, body, L(*pos), 0.26, MAT_CYAN, COL_PC)
-    end = (pos[0], pos[1], pos[2] - 0.18)
-    c = cable("HP_LEADER_" + key, [L(*anchor), L(*end)], 0.012, MAT_CYAN, COL_PC)
+# V7 FINAL: se eliminan los indicadores externos de componentes del HP 8200.
+# La placa, CPU, RAM, refrigeracion, almacenamiento y ODD quedan visibles
+# unicamente como hardware fisico, sin nombres, flechas ni lineas de referencia.
 
 
 # ============================================================
@@ -2362,9 +2353,15 @@ def static_camera(name, loc, target, lens):
     return o
 
 
-static_camera("CAMERA_MASTER", (17.5, -18.5, 8.5), (0, 0, 3), 28)
+# CAMARA MASTER FINAL:
+# - perfectamente centrada en X respecto al laboratorio
+# - colocada DENTRO del laboratorio
+# - encuadre ultra-wide para incluir paredes, techo, piso y zonas de trabajo
+# - orientada exclusivamente hacia el interior
+# - no se modifica la geometria ni la escala de la escena
+static_camera("CAMERA_MASTER", (0.0, -4.0, 5.0), (0.0, 1.5, 3.6), 15.0)
 static_camera("CAMERA_HERO_PC", (4.5, 1.5, 4.6), L(-0.5, 0, 0.6), 40)
-static_camera("CAMERA_WIDE", (0, -20, 8), (0, 1.5, 3.5), 24)
+static_camera("CAMERA_WIDE", (0.0, -20, 8), (0, 1.5, 3.5), 24)
 
 scene.camera = bpy.data.objects.get("CAMERA_MASTER") or bpy.data.objects.get("CAMERA_WIDE")
 
@@ -5222,7 +5219,7 @@ V18_PHOTO_lights()
 # ============================================================
 
 def V18_PHOTO_cameras():
-    plan = {"CAMERA_MASTER": (32.0, 8.0, "HP_PC_FLOOR"),
+    plan = {"CAMERA_MASTER": (15.0, 8.0, "HP_MOTHERBOARD"),
             "CAMERA_HERO_PC": (52.0, 5.6, "HP_MOTHERBOARD"),
             "CAMERA_WIDE": (28.0, 9.0, "HP_PC_FLOOR")}
     for name, (lens, fstop, focus) in plan.items():
@@ -5241,6 +5238,23 @@ def V18_PHOTO_cameras():
 
 
 V18_PHOTO_cameras()
+
+# Reafirmar la composicion MASTER despues de todos los pases fotograficos:
+# el script puede retocar lente/DOF, pero NUNCA vuelve a sacar la camara del interior.
+_cam_master = bpy.data.objects.get("CAMERA_MASTER")
+if _cam_master and _cam_master.type == "CAMERA":
+    _cam_master.location = (0.0, -4.0, 5.0)
+    point_at(_cam_master, (0.0, 1.5, 3.6))
+    _cam_master.data.lens = 15.0
+    _cam_master.data.sensor_width = 36.0
+    _cam_master.data.clip_start = 0.05
+    _cam_master.data.clip_end = 100.0
+    _cam_master.data.dof.use_dof = True
+    _cam_master.data.dof.aperture_fstop = 8.0
+    _focus_master = bpy.data.objects.get("HP_MOTHERBOARD")
+    if _focus_master:
+        _cam_master.data.dof.focus_object = _focus_master
+    scene.camera = _cam_master
 
 
 # ============================================================
